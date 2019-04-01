@@ -37,6 +37,10 @@ if [[ -z "$PERSISTENCE" ]]; then
     exit 1
 fi
 
+if [[ ! -z "$USE_NEW_RELIC" ]]; then
+
+    pip install newrelic
+fi
 
 cd /microservice
 

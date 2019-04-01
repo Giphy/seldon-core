@@ -160,3 +160,6 @@ examples/wrappers/go/.idea
 
 wrappers/s2i/python_openvino/s2i
 
+.idea
+
+
