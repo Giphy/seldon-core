@@ -20,7 +20,7 @@ else
     if [[ -z "$USE_NEW_RELIC" ]]; then
         exec seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
     else
-        echo "use New Relic monitoring"
+        echo "use NewRelic custom Giphy monitoring integration"
         exec newrelic-admin run-program seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
     fi
 

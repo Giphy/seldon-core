@@ -339,6 +339,21 @@ def main():
 
     if args.tracing:
         logger.info("Initializing tracing")
+        #
+        # import opentracing
+        # from ddtrace.opentracer import Tracer, set_global_tracer
+        #
+        # logger.info("Initializing Datadog")
+        # config = {
+        #     'enabled': True,
+        #     'agent_hostname': os.environ['DD_AGENT_HOST'],
+        #     'agent_port': os.environ['DD_TRACE_AGENT_PORT'],
+        #     'debug': True,
+        #     'priority_sampling': True
+        # }
+        # tracer = Tracer(args.interface_name, config=config)
+        # set_global_tracer(tracer)
+
         from jaeger_client import Config
 
         jaeger_serv = os.environ.get("JAEGER_AGENT_HOST","0.0.0.0")
@@ -373,8 +388,6 @@ def main():
                 )
         # this call also sets opentracing.tracer
         tracer = config.initialize_tracer()
-
-
 
     if args.api_type == "REST":
 
