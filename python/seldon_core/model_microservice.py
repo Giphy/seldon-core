@@ -137,7 +137,7 @@ def get_rest_microservice(user_model, debug=False):
 # GIPHY
 import newrelic.agent
 import time
-
+import traceback
 
 class SeldonModelGRPC(object):
     def __init__(self, user_model):
@@ -194,9 +194,10 @@ class SeldonModelGRPC(object):
                 }, self.application)
             return result
         except Exception as e:
-            prediction_duration = time.time() - start_time
+            prediction_duration = (time.time() - start_time) * 1000
             newrelic.agent.record_custom_event('failed_prediction', {
-                'user_model': self.user_model.__class__.__name__, 'prediction_duration': prediction_duration
+                'user_model': self.user_model.__class__.__name__, 'prediction_duration': prediction_duration,
+                'error': ''.join(traceback.format_tb(e.__traceback__))
             }, self.application)
             raise e
 
