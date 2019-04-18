@@ -37,9 +37,14 @@ if [[ -z "$PERSISTENCE" ]]; then
     exit 1
 fi
 
-if [[ ! -z "$USE_NEW_RELIC" ]]; then
+if [[ ! -z "$USE_DATA_DOG_TRACING" ]]; then
 
-    pip install newrelic
+    pip install ddtrace[opentracing] grpcio==1.17.1
+fi
+
+if [[ ! -z "$USE_JAEGER_TRACING" ]]; then
+    #  TODO: need to install opentracing here with a version less than 1.3.0
+    pip install grpcio==1.17.1 jaeger-client
 fi
 
 cd /microservice
@@ -61,4 +66,3 @@ elif [[ -f setup.py ]]; then
   echo "---> Installing application ..."
   pip install --find-links /whl -e .
 fi
-

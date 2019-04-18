@@ -135,71 +135,50 @@ def get_rest_microservice(user_model, debug=False):
 # ----------------------------
 
 # GIPHY
-import newrelic.agent
-import time
-import traceback
 
 class SeldonModelGRPC(object):
     def __init__(self, user_model):
         self.user_model = user_model
-        self.application = newrelic.agent.register_application()
 
     def Predict(self, request, context):
-        start_time = time.time()
-        newrelic.agent.record_custom_event('prediction', {'user_model': self.user_model.__class__.__name__},
-                                           self.application)
+        if hasattr(self.user_model, "predict_grpc"):
+            result = self.user_model.predict_grpc(request)
+        else:
+            features = get_data_from_proto(request)
+            meta = get_meta_from_proto(request)
+            datadef = request.data
+            data_type = request.WhichOneof("data_oneof")
+            predictions = predict(self.user_model, features, datadef.names, meta=meta)
 
-        try:
-            if hasattr(self.user_model, "predict_grpc"):
-                result = self.user_model.predict_grpc(request)
-            else:
-                features = get_data_from_proto(request)
-                meta = get_meta_from_proto(request)
-                datadef = request.data
-                data_type = request.WhichOneof("data_oneof")
-                predictions = predict(self.user_model, features, datadef.names, meta=meta)
+            # Construct meta data
+            meta = prediction_pb2.Meta()
+            metaJson = {}
+            tags = get_custom_tags(self.user_model)
+            if tags:
+                metaJson["tags"] = tags
+            metrics = get_custom_metrics(self.user_model)
+            if metrics:
+                metaJson["metrics"] = metrics
+            json_format.ParseDict(metaJson, meta)
 
-                # Construct meta data
-                meta = prediction_pb2.Meta()
-                metaJson = {}
-                tags = get_custom_tags(self.user_model)
-                if tags:
-                    metaJson["tags"] = tags
-                metrics = get_custom_metrics(self.user_model)
-                if metrics:
-                    metaJson["metrics"] = metrics
-                json_format.ParseDict(metaJson, meta)
-
-                if isinstance(predictions, np.ndarray) or data_type == "data":
-                    predictions = np.array(predictions)
-                    if len(predictions.shape) > 1:
-                        class_names = get_class_names(
-                            self.user_model, predictions.shape[1])
-                    else:
-                        class_names = []
-
-                    if data_type == "data":
-                        default_data_type = request.data.WhichOneof("data_oneof")
-                    else:
-                        default_data_type = "tensor"
-                    data = array_to_grpc_datadef(
-                        predictions, class_names, default_data_type)
-                    result = prediction_pb2.SeldonMessage(data=data, meta=meta)
+            if isinstance(predictions, np.ndarray) or data_type == "data":
+                predictions = np.array(predictions)
+                if len(predictions.shape) > 1:
+                    class_names = get_class_names(
+                        self.user_model, predictions.shape[1])
                 else:
-                    result = prediction_pb2.SeldonMessage(binData=predictions, meta=meta)
+                    class_names = []
 
-                prediction_duration = (time.time() - start_time) * 1000
-                newrelic.agent.record_custom_event('successful_prediction', {
-                    'user_model': self.user_model.__class__.__name__, 'prediction_duration': prediction_duration
-                }, self.application)
-            return result
-        except Exception as e:
-            prediction_duration = (time.time() - start_time) * 1000
-            newrelic.agent.record_custom_event('failed_prediction', {
-                'user_model': self.user_model.__class__.__name__, 'prediction_duration': prediction_duration,
-                'error': ''.join(traceback.format_tb(e.__traceback__))
-            }, self.application)
-            raise e
+                if data_type == "data":
+                    default_data_type = request.data.WhichOneof("data_oneof")
+                else:
+                    default_data_type = "tensor"
+                data = array_to_grpc_datadef(
+                    predictions, class_names, default_data_type)
+                result = prediction_pb2.SeldonMessage(data=data, meta=meta)
+            else:
+                result = prediction_pb2.SeldonMessage(binData=predictions, meta=meta)
+        return result
 
     def SendFeedback(self, feedback, context):
         if hasattr(self.user_model, "send_feedback_grpc"):

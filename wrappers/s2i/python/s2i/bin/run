@@ -17,12 +17,12 @@ else
     cd /microservice
     echo "starting microservice"
 
-    if [[ -z "$USE_NEW_RELIC" ]]; then
-        exec seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
+    if [[ ! -z "$USE_DATA_DOG_TRACING" ]]; then
+        echo "use Datadog custom Giphy monitoring integration"
+        exec ddtrace-run seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE --tracing $USE_DATA_DOG_TRACING
     else
-        echo "use NewRelic custom Giphy monitoring integration"
-        exec newrelic-admin run-program seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
+        echo "do not use monitoring"
+        exec seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
     fi
 
 fi
-

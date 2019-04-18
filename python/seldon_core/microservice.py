@@ -271,6 +271,59 @@ def load_annotations():
     return annotations
 
 
+def configure_tracer(args):
+    if int(os.getenv('USE_DATA_DOG_TRACING', '0')):
+        import opentracing
+        from ddtrace.opentracer import Tracer, set_global_tracer
+
+        logger.info("Initializing Datadog")
+        config = {
+            'agent_hostname': os.environ['DD_AGENT_HOST'],
+            'agent_port': int(os.environ['DD_TRACE_AGENT_PORT']),
+            'priority_sampling': True,
+        }
+        tracer = Tracer(args.interface_name, config=config)
+        set_global_tracer(tracer)
+    elif int(os.getenv('USE_JAEGER_TRACING', '0')):
+        from jaeger_client import Config
+
+        jaeger_serv = os.environ.get("JAEGER_AGENT_HOST","0.0.0.0")
+        jaeger_port = os.environ.get("JAEGER_AGENT_PORT", 5775)
+        jaeger_config = os.environ.get("JAEGER_CONFIG_PATH",None)
+        if jaeger_config is None:
+            logger.info("Using default tracing config")
+            config = Config(
+                config={ # usually read from some yaml config
+                    'sampler': {
+                        'type': 'const',
+                        'param': 1,
+                    },
+                    'local_agent': {
+                        'reporting_host': jaeger_serv,
+                        'reporting_port': jaeger_port,
+                    },
+                    'logging': True,
+                },
+                service_name=args.interface_name,
+                validate=True,
+            )
+        else:
+            logger.info("Loading tracing config from %s",jaeger_config)
+            import yaml
+            with open(jaeger_config, 'r') as stream:
+                config_dict = yaml.load(stream)
+                config = Config(
+                    config=config_dict,
+                    service_name=args.interface_name,
+                    validate=True,
+                )
+        # this call also sets opentracing.tracer
+        tracer = config.initialize_tracer()
+    else:
+        raise ValueError('Unknown monitoring service')
+    return tracer
+
+
 def main():
     LOG_FORMAT = '%(asctime)s - %(name)s:%(funcName)s:%(lineno)s - %(levelname)s:  %(message)s'
     logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
@@ -339,55 +392,7 @@ def main():
 
     if args.tracing:
         logger.info("Initializing tracing")
-        #
-        # import opentracing
-        # from ddtrace.opentracer import Tracer, set_global_tracer
-        #
-        # logger.info("Initializing Datadog")
-        # config = {
-        #     'enabled': True,
-        #     'agent_hostname': os.environ['DD_AGENT_HOST'],
-        #     'agent_port': os.environ['DD_TRACE_AGENT_PORT'],
-        #     'debug': True,
-        #     'priority_sampling': True
-        # }
-        # tracer = Tracer(args.interface_name, config=config)
-        # set_global_tracer(tracer)
-
-        from jaeger_client import Config
-
-        jaeger_serv = os.environ.get("JAEGER_AGENT_HOST","0.0.0.0")
-        jaeger_port = os.environ.get("JAEGER_AGENT_PORT", 5775)
-        jaeger_config = os.environ.get("JAEGER_CONFIG_PATH",None)
-        if jaeger_config is None:
-            logger.info("Using default tracing config")
-            config = Config(
-                config={ # usually read from some yaml config
-                    'sampler': {
-                        'type': 'const',
-                        'param': 1,
-                    },
-                    'local_agent': {
-                        'reporting_host': jaeger_serv,
-                        'reporting_port': jaeger_port,
-                    },
-                    'logging': True,
-                },
-                service_name=args.interface_name,
-                validate=True,
-            )
-        else:
-            logger.info("Loading tracing config from %s",jaeger_config)
-            import yaml
-            with open(jaeger_config, 'r') as stream:
-                config_dict = yaml.load(stream)
-                config = Config(
-                    config=config_dict,
-                    service_name=args.interface_name,
-                    validate=True,
-                )
-        # this call also sets opentracing.tracer
-        tracer = config.initialize_tracer()
+        tracer = configure_tracer(args)
 
     if args.api_type == "REST":
 
