@@ -37,12 +37,12 @@ if [[ -z "$PERSISTENCE" ]]; then
     exit 1
 fi
 
-if [[ ! -z "$USE_DATA_DOG_TRACING" ]]; then
+if [[ "$USE_DATA_DOG_TRACING" == "1" ]]; then
 
     pip install ddtrace[opentracing] grpcio==1.17.1
 fi
 
-if [[ ! -z "$USE_JAEGER_TRACING" ]]; then
+if [[ "$USE_JAEGER_TRACING" == "1" ]]; then
     #  TODO: need to install opentracing here with a version less than 1.3.0
     pip install grpcio==1.17.1 jaeger-client
 fi

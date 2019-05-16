@@ -24,6 +24,10 @@ build_local: get_local_repo
 	cat Dockerfile.local.tmpl | sed  -e "s|%PYTHON_VERSION%|$(PYTHON_VERSION)|" > Dockerfile
 	set -x && docker build -t $(IMAGE_NAME):$(IMAGE_VERSION) .
 
+.PHONY: build_local_nvidia
+build_local_nvidia: get_local_repo
+	docker build -t $(IMAGE_NAME):$(IMAGE_VERSION) -f Dockerfile.nvidia .
+
 tag_base_python:
 	docker tag $(IMAGE_NAME):$(IMAGE_VERSION) $(BASE_IMAGE_NAME):$(IMAGE_VERSION)
 
