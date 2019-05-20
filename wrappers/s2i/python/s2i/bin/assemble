@@ -57,7 +57,7 @@ if [ "$(ls /tmp/artifacts/ 2>/dev/null)" ]; then
 fi
 
 echo "---> Installing application source..."
-cp -Rf /tmp/src/. ./
+mv /tmp/src/* ./
 
 if [[ -f requirements.txt ]]; then
   echo "---> Installing dependencies ..."
