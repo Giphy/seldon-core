@@ -450,9 +450,10 @@ def main():
         logger.info('Starting servers')
 
     from unittest import mock
+    from random import randint
     # this mock is needed in order to avoid datadog crash because of blank trace id header:
     # https://github.com/DataDog/dd-trace-py/blob/4e1665631e21a435f1caa7cb845c1092dc0c90af/ddtrace/opentracer/propagation/http.py#L72
-    with mock.patch('ddtrace.propagation.http.HTTPPropagator.extract_trace_id', return_value=1):
+    with mock.patch('ddtrace.propagation.http.HTTPPropagator.extract_trace_id', new=lambda _: randint(1, 1000000000)):
         startServers(server1_func, server2_func)
 
 
