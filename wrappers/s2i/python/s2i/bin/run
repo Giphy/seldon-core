@@ -20,9 +20,6 @@ else
     if [[ ! -z "$USE_DATA_DOG_TRACING" ]]; then
         echo "use Datadog custom Giphy monitoring integration"
         exec ddtrace-run seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE --tracing $USE_DATA_DOG_TRACING
-    elif [[ ! -z "$USE_JAEGER_TRACING" ]]; then
-        echo "use Jaeger monitoring integration"
-        exec seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE --tracing $USE_JAEGER_TRACING
     else
         echo "do not use monitoring"
         exec seldon-core-microservice $MODEL_NAME $API_TYPE --service-type $SERVICE_TYPE --persistence $PERSISTENCE
