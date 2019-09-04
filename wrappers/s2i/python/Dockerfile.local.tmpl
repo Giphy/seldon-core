@@ -13,8 +13,6 @@ COPY _python /microservice
 RUN cd /microservice/python && \
     make install
 
-RUN  pip install setuptools==41.0.0
-
 COPY ./s2i/bin/ /s2i/bin
 
 EXPOSE 5000

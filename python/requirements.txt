@@ -11,4 +11,3 @@ tensorflow==1.10.1
 Flask-OpenTracing==0.2.0
 grpcio-opentracing
 pyyaml
-nmslib==1.7.3.6

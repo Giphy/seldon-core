@@ -25,7 +25,7 @@ setup(name='seldon-core',
           'grpcio',
           'tensorflow',
           'Flask-OpenTracing==0.2.0',
-          # 'opentracing==2.0.0', #  needed for datadog only
+          'opentracing==2.0.0',
           'grpcio-opentracing',
           'pyyaml',
           'nmslib==1.7.3.6'
