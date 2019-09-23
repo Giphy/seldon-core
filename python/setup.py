@@ -1,5 +1,9 @@
+import subprocess
+
 from setuptools import find_packages, setup
 from seldon_core import __version__
+
+subprocess.call("CFLAGS=-march=x86-64 pip install nmslib==1.8.1", shell=True)
 
 setup(name='seldon-core',
       author='Seldon Technologies Ltd.',
