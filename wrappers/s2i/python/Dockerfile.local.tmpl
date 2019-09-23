@@ -10,6 +10,9 @@ WORKDIR /microservice
 
 COPY _python /microservice
 
+RUN pip install -U pip && \
+    pip install setuptools==41.0.0
+
 RUN cd /microservice/python && \
     make install
 

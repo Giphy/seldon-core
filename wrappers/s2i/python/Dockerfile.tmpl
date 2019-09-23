@@ -8,7 +8,9 @@ RUN apt-get install -y python-pip python-dev build-essential
 RUN mkdir microservice
 WORKDIR /microservice
 
-RUN pip install seldon-core
+RUN pip install -U pip && \
+    pip install setuptools==41.0.0 && \
+    pip install seldon-core
 
 COPY ./s2i/bin/ /s2i/bin
 
