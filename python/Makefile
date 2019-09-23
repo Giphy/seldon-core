@@ -34,6 +34,7 @@ update_package: get_apis build_apis update_version
 .PHONY: install
 install:
 	pip install -e .
+	CFLAGS=-march=x86-64 pip install nmslib==1.8.1
 
 .PHONY: install-dev
 install-dev:

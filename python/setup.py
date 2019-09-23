@@ -27,8 +27,7 @@ setup(name='seldon-core',
           'Flask-OpenTracing==0.2.0',
           'opentracing==2.0.0',
           'grpcio-opentracing',
-          'pyyaml',
-          'nmslib==1.7.3.6'
+          'pyyaml'
       ],
       tests_require=[
           'pytest',
