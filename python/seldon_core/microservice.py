@@ -482,7 +482,11 @@ def main():
         server3_func = None
 
     logger.info("Starting servers")
-    start_servers(server1_func, server2_func, server3_func, metrics_server_func)
+    from unittest import mock
+    # this mock is needed in order to avoid datadog crash because of blank trace id header:
+    # https://github.com/DataDog/dd-trace-py/blob/4e1665631e21a435f1caa7cb845c1092dc0c90af/ddtrace/opentracer/propagation/http.py#L72
+    with mock.patch('ddtrace.propagation.http.HTTPPropagator.extract_trace_id', return_value=1):
+        start_servers(server1_func, server2_func, server3_func, metrics_server_func)
 
 
 if __name__ == "__main__":
