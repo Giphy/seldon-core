@@ -84,7 +84,8 @@ class UserModelApplication(StandaloneApplication):
         super().__init__(app, options)
 
     def load(self):
-        if self.jaeger_extra_tags is not None:
+        dd_enabled = os.environ.get("DD_ENABLED", "false")
+        if self.jaeger_extra_tags is not None or dd_enabled.lower() in ("yes", "true", "t", "1"):
             logger.info("Tracing branch is active")
             from flask_opentracing import FlaskTracing
 

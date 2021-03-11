@@ -355,8 +355,9 @@ def main():
     grpc_port = args.grpc_port
     metrics_port = args.metrics_port
 
-    # if args.tracing:
-    #    tracer = setup_tracing(args.interface_name)
+    tracer = None
+    if args.tracing:
+       tracer = setup_tracing(args.interface_name)
 
     seldon_metrics = SeldonMetrics(worker_id_func=os.getpid)
     # TODO why 2 ways to create metrics server
@@ -371,11 +372,9 @@ def main():
                 user_object.load()
             except (NotImplementedError, AttributeError):
                 pass
-            if args.tracing:
+            if tracer:
                 logger.info("Tracing branch is active")
                 from flask_opentracing import FlaskTracing
-
-                tracer = setup_tracing(args.interface_name)
 
                 logger.info("Set JAEGER_EXTRA_TAGS %s", jaeger_extra_tags)
                 FlaskTracing(tracer, True, app, jaeger_extra_tags)
@@ -424,13 +423,13 @@ def main():
 
     def grpc_prediction_server():
 
-        if args.tracing:
+        if tracer:
             from grpc_opentracing import open_tracing_server_interceptor
 
-            logger.info("Adding tracer")
-            tracer = setup_tracing(args.interface_name)
+            logger.info("Adding GRPC tracer")
             interceptor = open_tracing_server_interceptor(tracer)
         else:
+            logger.info("No GRPC tracer provided")
             interceptor = None
 
         server = seldon_microservice.get_grpc_server(
