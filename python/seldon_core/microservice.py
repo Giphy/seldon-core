@@ -372,7 +372,7 @@ def main():
                 user_object.load()
             except (NotImplementedError, AttributeError):
                 pass
-            if tracer:
+            if tracer is not None:
                 logger.info("Tracing branch is active")
                 from flask_opentracing import FlaskTracing
 
@@ -421,9 +421,8 @@ def main():
         logger.info("REST gunicorn microservice running on port %i", http_port)
         server1_func = rest_prediction_server
 
-    def grpc_prediction_server():
-
-        if tracer:
+    def grpc_prediction_server(tracer):
+        if tracer is not None:
             from grpc_opentracing import open_tracing_server_interceptor
 
             logger.info("Adding GRPC tracer")
@@ -452,7 +451,7 @@ def main():
         while True:
             time.sleep(1000)
 
-    server2_func = grpc_prediction_server
+    server2_func = partial(grpc_prediction_server, tracer)
 
     def rest_metrics_server():
         app = seldon_microservice.get_metrics_microservice(seldon_metrics)
