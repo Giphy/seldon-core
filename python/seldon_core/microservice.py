@@ -413,12 +413,12 @@ def main():
         logger.info("REST gunicorn microservice running on port %i", http_port)
         server1_func = rest_prediction_server
 
-    def grpc_prediction_server():
 
+    def grpc_prediction_server():
         if args.tracing:
             from grpc_opentracing import open_tracing_server_interceptor
 
-            logger.info("Adding tracer")
+            logger.info("Adding GRPC tracer")
             tracer = setup_tracing(args.interface_name)
             interceptor = open_tracing_server_interceptor(tracer)
         else:
