@@ -1,0 +1,2 @@
+numpy==1.20.1
+seldon-core @ git+git://github.com/Giphy/seldon-core.git@06b3e2ff825e6a6afa63d8a59287d25d0cf93e00#egg=seldon-core&subdirectory=python
