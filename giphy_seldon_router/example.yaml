@@ -1,0 +1,148 @@
+apiVersion: machinelearning.seldon.io/v1
+kind: SeldonDeployment
+metadata:
+  name: capstone-gif-router
+spec:
+  annotations:
+    seldon.io/headless-svc: "true"
+  name: capstone-gif-router
+  predictors:
+    - componentSpecs:
+        - pdbSpec:
+            maxUnavailable: 1
+          spec:
+            containers:
+              - env:
+                - name: TRACING
+                  value: "1"
+                - name: DD_ENABLED
+                  value: "true"
+                - name: DD_AGENT_HOST
+                  value: datadog-apm.default.svc
+                - name: DD_TRACE_AGENT_PORT
+                  value: "8126"
+                - name: MODEL_NAME
+                  value: "capstone_model.CapstoneGifToGif"
+                - name: NMSLIB_INDEX_PATH
+                  value: "/app/resources/gifs_index"
+                image: 134757864544.dkr.ecr.us-east-1.amazonaws.com/capstone-model:develop_f1d0ea9_21.05.202323
+                imagePullPolicy: Always
+                name: capstone-model
+                livenessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9000
+                readinessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9000
+                resources:
+                  requests:
+                    memory: 12G
+                    cpu: '1'
+                  limits:
+                    memory: 15G
+                    cpu: '2'
+              - env:
+                - name: TRACING
+                  value: "1"
+                - name: DD_ENABLED
+                  value: "true"
+                - name: DD_AGENT_HOST
+                  value: datadog-apm.default.svc
+                - name: DD_TRACE_AGENT_PORT
+                  value: "8126"
+                - name: MODEL_NAME
+                  value: "capstone_model.CapstoneGifToGif"
+                - name: NMSLIB_INDEX_PATH
+                  value: "/app/resources_graph_ft/gifs_index"
+                - name: CAPSTONE_RESOURCES
+                  value: "/app/resources_graph_ft/"
+                image: 134757864544.dkr.ecr.us-east-1.amazonaws.com/capstone-model:graph_ft_86f036d_21.05.211143
+                imagePullPolicy: Always
+                name: graph-ft-model
+                livenessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9001
+                readinessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9001
+                resources:
+                  requests:
+                    memory: 12G
+                    cpu: '1'
+                  limits:
+                    memory: 15G
+                    cpu: '2'
+              - image: 134757864544.dkr.ecr.us-east-1.amazonaws.com/seldon-core:giphy_router_1.6.0
+                imagePullPolicy: Always
+                name: giphy-router
+                livenessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9002
+                readinessProbe:
+                  failureThreshold: 3
+                  periodSeconds: 20
+                  successThreshold: 1
+                  initialDelaySeconds: 50
+                  timeoutSeconds: 20
+                  tcpSocket:
+                    port: 9002
+            terminationGracePeriodSeconds: 1
+      graph:
+        children:
+        - name: capstone-model
+          type: MODEL
+        - name: graph-ft-model
+          type: MODEL
+        endpoint:
+          type: GRPC
+        name: giphy-router
+        parameters:
+        - name: n_branches
+          type: INT
+          value: '2'
+        - name: branch_names
+          type: STRING
+          value: capstone:graph-ft
+        - name: branch_probabilities
+          type: STRING
+          value: 0.5:0.5
+        - name: seed
+          type: INT
+          value: '1'
+        - name: verbose
+          type: BOOL
+          value: '0'
+        type: ROUTER
+      name: knn
+      replicas: 1
+      svcOrchSpec:
+        env:
+        - name: SELDON_ENABLE_ROUTING_INJECTION
+          value: 'true'
+      labels:
+        version: v1
