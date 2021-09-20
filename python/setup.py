@@ -36,7 +36,7 @@ setup(
         "grpcio-reflection < 1.35.0",
         "PyYAML<5.5",
         "gunicorn >= 19.9.0, < 20.1.0",
-        "setuptools <= 41.0.0",
+        "setuptools < 58.0.0",
         "prometheus_client >= 0.7.1, < 0.9.0",
         "ddtrace == 0.48.2",
     ],
