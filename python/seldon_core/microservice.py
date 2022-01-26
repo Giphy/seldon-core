@@ -61,7 +61,7 @@ def generate_enhanced_predict_method(base_predict):
     def predict(self, X, _features_names=None):
         if len(X) == 0:
             return []
-        return base_predict(X, _features_names)
+        return base_predict(self, X, _features_names)
     return predict
 
 
