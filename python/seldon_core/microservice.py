@@ -53,7 +53,7 @@ def grpc_health_check(self):
     batch = struct_pb2.ListValue()
     data = prediction_pb2.DefaultData(ndarray=batch)
     seldon_request = prediction_pb2.SeldonMessage(data=data)
-    stub.Predict(seldon_request)
+    stub.Predict(seldon_request, metadata=[('x-datadog-trace-id', '0')])
     return []
 
 
