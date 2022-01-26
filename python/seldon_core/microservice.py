@@ -7,6 +7,7 @@ import logging
 import multiprocessing as mp
 import threading
 import sys
+import grpc
 
 from typing import Dict, Callable
 from distutils.util import strtobool
@@ -22,6 +23,8 @@ from seldon_core.app import (
     threads,
     post_worker_init,
 )
+from seldon_core.proto import prediction_pb2, prediction_pb2_grpc
+from google.protobuf import struct_pb2
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +44,25 @@ DEFAULT_METRICS_PORT = 6000
 
 DEBUG_ENV = "SELDON_DEBUG"
 GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
+
+
+def grpc_health_check(self):
+    channel = grpc.insecure_channel(f"localhost:{os.environ['PREDICTIVE_UNIT_GRPC_SERVICE_PORT']}")
+    stub = prediction_pb2_grpc.ModelStub(channel)
+
+    batch = struct_pb2.ListValue()
+    data = prediction_pb2.DefaultData(ndarray=batch)
+    seldon_request = prediction_pb2.SeldonMessage(data=data)
+    stub.Predict(seldon_request)
+    return []
+
+
+def generate_enhanced_predict_method(base_predict):
+    def predict(self, X, _features_names=None):
+        if len(X) == 0:
+            return []
+        return base_predict(X, _features_names)
+    return predict
 
 
 def start_servers(
@@ -335,6 +357,11 @@ def main():
         logger.info("Importing submodule %s", parts)
         interface_file = importlib.import_module(parts[0])
         user_class = getattr(interface_file, parts[1])
+
+    # Adding a GPRC healthcheck
+    predict = generate_enhanced_predict_method(user_class.predict)
+    setattr(user_class, 'predict', predict)
+    setattr(user_class, 'health_status', grpc_health_check)
 
     if args.persistence:
         logger.info("Restoring persisted component")
