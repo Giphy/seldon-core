@@ -39,6 +39,7 @@ setup(
         "setuptools < 58.0.0",
         "prometheus_client >= 0.7.1, < 0.9.0",
         "ddtrace == 0.48.2",
+        "markupsafe == 2.0.1"
     ],
     extras_require=extras,
     entry_points={
