@@ -22,20 +22,20 @@ setup(
     python_requires=">=3.6",
     install_requires=[
         "Flask<2.0.0",
-        "jsonschema<4.0.0",
+        "jsonschema>=4.3.0",
         "Flask-cors<4.0.0",
         "requests<3.0.0",
-        "numpy<2.0.0",
+        "numpy <= 1.20.1",
         "flatbuffers<2.0.0",
-        "protobuf<4.0.0",
-        "grpcio<2.0.0",
+        "protobuf==3.20.3",
+        "grpcio < 2.0.0",
         "Flask-OpenTracing >= 1.1.0, < 1.2.0",
         "opentracing >= 2.2.0, < 2.5.0",
         "jaeger-client >= 4.1.0, < 4.5.0",
         "grpcio-opentracing >= 1.1.4, < 1.2.0",
         "grpcio-reflection < 1.35.0",
         "gunicorn >= 19.9.0, < 20.2.0",
-        "setuptools >= 41.0.0",
+        "setuptools < 58.0.0",
         "prometheus_client >= 0.7.1, < 0.9.0",
         # Addresses https://github.com/SeldonIO/seldon-core/issues/4017
         "werkzeug < 2.1",
@@ -49,7 +49,9 @@ setup(
         "urllib3 == 1.26.5",
         # Addresses flask dependecy bug https://github.com/pallets/flask/issues/4455
         "itsdangerous==1.1.0",
-        "markupsafe==1.1.1",
+        "markupsafe==2.0.1",
+        "ddtrace==1.5.5",
+        "jinja2<3.1.0"
     ],
     extras_require=extras,
     entry_points={

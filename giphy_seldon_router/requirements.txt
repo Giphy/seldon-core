@@ -1,0 +1,1 @@
+seldon-core @ git+git://github.com/Giphy/seldon-core.git@70d17e6657e1b8fc235849c32c18ad9078261288#egg=seldon-core&subdirectory=python
