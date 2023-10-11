@@ -25,7 +25,7 @@ setup(
         "jsonschema>=4.3.0",
         "Flask-cors<4.0.0",
         "requests<3.0.0",
-        "numpy <= 1.20.1",
+        "numpy <= 1.22.1",
         "flatbuffers<2.0.0",
         "protobuf==3.20.3",
         "grpcio < 2.0.0",
@@ -51,7 +51,7 @@ setup(
         "itsdangerous==1.1.0",
         "markupsafe==2.0.1",
         "ddtrace==1.5.5",
-        "jinja2<3.1.0"
+        "jinja2<3.1.0",
     ],
     extras_require=extras,
     entry_points={
