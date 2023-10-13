@@ -42,7 +42,7 @@ setup(
         # Addresses CVE-2020-1971
         "cryptography >= 3.4, < 3.5",
         # Addresses CVE SNYK-PYTHON-PYYAML-590151
-        "PyYAML >= 5.4, < 5.5",
+        "PyYAML >= 5.4",
         # Addresses CVE PRISMA-2021-0020
         "click >= 8.0.0a1, < 8.1",
         # Addresses CVE CVE-2019-11236 and CVE-2020-26137 and SNYK-PYTHON-URLLIB3-1533435
