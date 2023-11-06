@@ -65,21 +65,26 @@ GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
 
 
 def grpc_health_check(self):
-    channel = grpc.insecure_channel(f"localhost:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}")
+    channel = grpc.insecure_channel(
+        f"localhost:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}"
+    )
     stub = prediction_pb2_grpc.ModelStub(channel)
 
     batch = struct_pb2.ListValue()
     data = prediction_pb2.DefaultData(ndarray=batch)
     seldon_request = prediction_pb2.SeldonMessage(data=data)
-    stub.Predict(seldon_request, metadata=[('x-datadog-trace-id', '2')])
+    stub.Predict(seldon_request, metadata=[("x-datadog-trace-id", "2")])
     return []
 
 
 def generate_enhanced_predict_method(base_predict):
-    def predict(self, X, _features_names=None):
+    def predict(self, X, _features_names=None, meta=None):
         if len(X) == 0:
             return []
+        if meta is not None:
+            return base_predict(self, X, _features_names, meta=meta)
         return base_predict(self, X, _features_names)
+
     return predict
 
 
@@ -417,8 +422,8 @@ def main():
 
     # Adding a GPRC healthcheck
     predict = generate_enhanced_predict_method(user_class.predict)
-    setattr(user_class, 'predict', predict)
-    setattr(user_class, 'health_status', grpc_health_check)
+    setattr(user_class, "predict", predict)
+    setattr(user_class, "health_status", grpc_health_check)
 
     if args.persistence:
         logger.error(f"Persistence: ignored, persistence is deprecated")
