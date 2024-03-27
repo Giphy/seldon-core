@@ -2,12 +2,13 @@ package controllers
 
 import (
 	"context"
+	"testing"
+
 	. "github.com/onsi/gomega"
 	appsv1 "k8s.io/api/apps/v1"
 	v1 "k8s.io/api/core/v1"
 	v1meta "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
-	"testing"
 )
 
 func TestStorageInitalizerInjector(t *testing.T) {
@@ -34,7 +35,7 @@ func TestStorageInitalizerInjector(t *testing.T) {
 	_, err = mi.InjectModelInitializer(&d, containerName, "gs://mybucket/mymodel", "", "", "")
 	g.Expect(err).To(BeNil())
 	g.Expect(len(d.Spec.Template.Spec.InitContainers)).To(Equal(1))
-	g.Expect(d.Spec.Template.Spec.InitContainers[0].Image).To(Equal("gcr.io/kfserving/storage-initializer:v0.4.0"))
+	g.Expect(d.Spec.Template.Spec.InitContainers[0].Image).To(Equal("seldonio/rclone-storage-initializer:1.16.0"))
 }
 
 func TestStorageInitalizerInjectorWithRelatedImage(t *testing.T) {

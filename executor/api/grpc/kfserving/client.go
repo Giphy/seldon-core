@@ -3,6 +3,9 @@ package kfserving
 import (
 	"context"
 	"fmt"
+	"io"
+	"math"
+
 	"github.com/go-logr/logr"
 	"github.com/pkg/errors"
 	"github.com/seldonio/seldon-core/executor/api/client"
@@ -11,9 +14,7 @@ import (
 	"github.com/seldonio/seldon-core/executor/api/payload"
 	v1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
 	"google.golang.org/grpc"
-	"io"
-	"math"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type KFServingGrpcClient struct {
@@ -112,11 +113,16 @@ func (s *KFServingGrpcClient) Chain(ctx context.Context, modelName string, msg p
 	switch v := msg.GetPayload().(type) {
 	case *inference.ModelInferRequest:
 		s.Log.Info("Identity chain")
+		if v.ModelName == "" {
+			v.ModelName = modelName
+		}
+
 		return msg, nil
 	case *inference.ModelInferResponse:
 		s.Log.Info("Chain!")
+
 		inputTensors := make([]*inference.ModelInferRequest_InferInputTensor, len(v.Outputs))
-		for _, oTensor := range v.Outputs {
+		for idx, oTensor := range v.Outputs {
 			inputTensor := &inference.ModelInferRequest_InferInputTensor{
 				Name:       oTensor.Name,
 				Datatype:   oTensor.Datatype,
@@ -124,10 +130,13 @@ func (s *KFServingGrpcClient) Chain(ctx context.Context, modelName string, msg p
 				Parameters: oTensor.Parameters,
 				Contents:   oTensor.Contents,
 			}
-			inputTensors = append(inputTensors, inputTensor)
+			inputTensors[idx] = inputTensor
 		}
+
 		pr := inference.ModelInferRequest{
-			Inputs: inputTensors,
+			ModelName:  modelName,
+			Inputs:     inputTensors,
+			Parameters: v.Parameters,
 		}
 		msg2 := payload.ProtoPayload{Msg: &pr}
 		return &msg2, nil

@@ -1,0 +1,21 @@
+---
+- name: Install Seldon Core & Prerequisites
+  hosts: localhost
+  roles:
+  - ecosystem
+  - seldon
+
+  vars:
+    full_install: yes
+
+    install_istio: "{{ full_install }}"
+    install_minio: "{{ full_install }}"
+    install_prometheus: "{{ full_install }}"
+    install_seldon_core: "{{ full_install }}"
+
+    # Overwrite this variable if you want to DO NOT want to include any variable from defaults
+    vars_file: vars/default.yaml
+
+  pre_tasks:
+  - name: "Load vars from {{ vars_file }}"
+    include_vars: "{{ vars_file }}"

@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"fmt"
+	utils2 "github.com/seldonio/seldon-core/operator/controllers/utils"
 	"os"
 	"strconv"
 	"strings"
@@ -33,53 +34,42 @@ import (
 )
 
 const (
-	ENV_DEFAULT_EXECUTOR_SERVER_PORT      = "EXECUTOR_SERVER_PORT"
-	ENV_DEFAULT_EXECUTOR_SERVER_GRPC_PORT = "EXECUTOR_SERVER_GRPC_PORT"
-	ENV_DEFAULT_EXECUTOR_CPU_REQUEST      = "EXECUTOR_DEFAULT_CPU_REQUEST"
-	ENV_DEFAULT_EXECUTOR_MEMORY_REQUEST   = "EXECUTOR_DEFAULT_MEMORY_REQUEST"
-	ENV_DEFAULT_EXECUTOR_CPU_LIMIT        = "EXECUTOR_DEFAULT_CPU_LIMIT"
-	ENV_DEFAULT_EXECUTOR_MEMORY_LIMIT     = "EXECUTOR_DEFAULT_MEMORY_LIMIT"
-	ENV_DEFAULT_ENGINE_CPU_REQUEST        = "ENGINE_DEFAULT_CPU_REQUEST"
-	ENV_DEFAULT_ENGINE_MEMORY_REQUEST     = "ENGINE_DEFAULT_MEMORY_REQUEST"
-	ENV_DEFAULT_ENGINE_CPU_LIMIT          = "ENGINE_DEFAULT_CPU_LIMIT"
-	ENV_DEFAULT_ENGINE_MEMORY_LIMIT       = "ENGINE_DEFAULT_MEMORY_LIMIT"
-	ENV_EXECUTOR_METRICS_PORT_NAME        = "EXECUTOR_SERVER_METRICS_PORT_NAME"
-	ENV_EXECUTOR_PROMETHEUS_PATH          = "EXECUTOR_PROMETHEUS_PATH"
-	ENV_ENGINE_PROMETHEUS_PATH            = "ENGINE_PROMETHEUS_PATH"
-	ENV_EXECUTOR_USER                     = "EXECUTOR_CONTAINER_USER"
-	ENV_ENGINE_USER                       = "ENGINE_CONTAINER_USER"
-	ENV_USE_EXECUTOR                      = "USE_EXECUTOR"
+	ENV_DEFAULT_EXECUTOR_SERVER_PORT             = "EXECUTOR_SERVER_PORT"
+	ENV_DEFAULT_EXECUTOR_SERVER_GRPC_PORT        = "EXECUTOR_SERVER_GRPC_PORT"
+	ENV_DEFAULT_EXECUTOR_CPU_REQUEST             = "EXECUTOR_DEFAULT_CPU_REQUEST"
+	ENV_DEFAULT_EXECUTOR_MEMORY_REQUEST          = "EXECUTOR_DEFAULT_MEMORY_REQUEST"
+	ENV_DEFAULT_EXECUTOR_CPU_LIMIT               = "EXECUTOR_DEFAULT_CPU_LIMIT"
+	ENV_DEFAULT_EXECUTOR_MEMORY_LIMIT            = "EXECUTOR_DEFAULT_MEMORY_LIMIT"
+	ENV_EXECUTOR_METRICS_PORT_NAME               = "EXECUTOR_SERVER_METRICS_PORT_NAME"
+	ENV_EXECUTOR_PROMETHEUS_PATH                 = "EXECUTOR_PROMETHEUS_PATH"
+	ENV_EXECUTOR_REQUEST_LOGGER_WORK_QUEUE_SIZE  = "EXECUTOR_REQUEST_LOGGER_WORK_QUEUE_SIZE"
+	ENV_EXECUTOR_REQUEST_LOGGER_WRITE_TIMEOUT_MS = "EXECUTOR_REQUEST_LOGGER_WRITE_TIMEOUT_MS"
+	ENV_EXECUTOR_FULL_HEALTH_CHECKS              = "EXECUTOR_FULL_HEALTH_CHECKS"
+	ENV_EXECUTOR_USER                            = "EXECUTOR_CONTAINER_USER"
+	ENV_USE_EXECUTOR                             = "USE_EXECUTOR"
 
 	DEFAULT_EXECUTOR_CONTAINER_PORT = 8000
 	DEFAULT_EXECUTOR_GRPC_PORT      = 5001
 
 	ENV_EXECUTOR_IMAGE         = "EXECUTOR_CONTAINER_IMAGE_AND_VERSION"
 	ENV_EXECUTOR_IMAGE_RELATED = "RELATED_IMAGE_EXECUTOR" //RedHat specific
-	ENV_ENGINE_IMAGE           = "ENGINE_CONTAINER_IMAGE_AND_VERSION"
-	ENV_ENGINE_IMAGE_RELATED   = "RELATED_IMAGE_ENGINE" //Redhat specific
 )
 
 var (
 	EngineContainerName     = "seldon-container-engine"
 	envExecutorImage        = os.Getenv(ENV_EXECUTOR_IMAGE)
 	envExecutorImageRelated = os.Getenv(ENV_EXECUTOR_IMAGE_RELATED)
-	envEngineImage          = os.Getenv(ENV_ENGINE_IMAGE)
-	envEngineImageRelated   = os.Getenv(ENV_ENGINE_IMAGE_RELATED)
-	envEngineUser           = os.Getenv(ENV_ENGINE_USER)
 	envExecutorUser         = os.Getenv(ENV_EXECUTOR_USER)
 	envUseExecutor          = os.Getenv(ENV_USE_EXECUTOR)
 
 	executorMetricsPortName = utils.GetEnv(ENV_EXECUTOR_METRICS_PORT_NAME, constants.DefaultMetricsPortName)
 
-	executorDefaultCpuRequest    = utils.GetEnv(ENV_DEFAULT_EXECUTOR_CPU_REQUEST, constants.DefaultExecutorCpuRequest)
-	executorDefaultCpuLimit      = utils.GetEnv(ENV_DEFAULT_EXECUTOR_CPU_LIMIT, constants.DefaultExecutorCpuLimit)
-	executorDefaultMemoryRequest = utils.GetEnv(ENV_DEFAULT_EXECUTOR_MEMORY_REQUEST, constants.DefaultExecutorMemoryRequest)
-	executorDefaultMemoryLimit   = utils.GetEnv(ENV_DEFAULT_EXECUTOR_MEMORY_LIMIT, constants.DefaultExecutorMemoryLimit)
-
-	engineDefaultCpuRequest    = utils.GetEnv(ENV_DEFAULT_ENGINE_CPU_REQUEST, constants.DefaultEngineCpuRequest)
-	engineDefaultCpuLimit      = utils.GetEnv(ENV_DEFAULT_ENGINE_CPU_LIMIT, constants.DefaultEngineCpuLimit)
-	engineDefaultMemoryRequest = utils.GetEnv(ENV_DEFAULT_ENGINE_MEMORY_REQUEST, constants.DefaultEngineMemoryRequest)
-	engineDefaultMemoryLimit   = utils.GetEnv(ENV_DEFAULT_ENGINE_MEMORY_LIMIT, constants.DefaultEngineMemoryLimit)
+	executorDefaultCpuRequest       = utils.GetEnv(ENV_DEFAULT_EXECUTOR_CPU_REQUEST, constants.DefaultExecutorCpuRequest)
+	executorDefaultCpuLimit         = utils.GetEnv(ENV_DEFAULT_EXECUTOR_CPU_LIMIT, constants.DefaultExecutorCpuLimit)
+	executorDefaultMemoryRequest    = utils.GetEnv(ENV_DEFAULT_EXECUTOR_MEMORY_REQUEST, constants.DefaultExecutorMemoryRequest)
+	executorDefaultMemoryLimit      = utils.GetEnv(ENV_DEFAULT_EXECUTOR_MEMORY_LIMIT, constants.DefaultExecutorMemoryLimit)
+	executorReqLoggerWorkQueueSize  = utils.GetEnv(ENV_EXECUTOR_REQUEST_LOGGER_WORK_QUEUE_SIZE, constants.DefaultExecutorReqLoggerWorkQueueSize)
+	executorReqLoggerWriteTimeoutMs = utils.GetEnv(ENV_EXECUTOR_REQUEST_LOGGER_WRITE_TIMEOUT_MS, constants.DefaultExecutorReqLoggerWriteTimeoutMs)
 )
 
 func addEngineToDeployment(mlDep *machinelearningv1.SeldonDeployment, p *machinelearningv1.PredictorSpec, engine_http_port int, engine_grpc_port int, pSvcName string, deploy *appsv1.Deployment) error {
@@ -115,8 +105,9 @@ func addEngineToDeployment(mlDep *machinelearningv1.SeldonDeployment, p *machine
 		deploy.Spec.Template.Annotations = make(map[string]string)
 	}
 	//overwrite annotations with predictor annotations
-	for _, ann := range p.Annotations {
-		deploy.Spec.Template.Annotations[ann] = p.Annotations[ann]
+	for k, v := range p.Annotations {
+		deploy.Annotations[k] = v
+		deploy.Spec.Template.Annotations[k] = v
 	}
 
 	deploy.ObjectMeta.Labels[machinelearningv1.Label_seldon_app] = pSvcName
@@ -167,58 +158,29 @@ func getExecutorGrpcPort() (engine_grpc_port int, err error) {
 	return engine_grpc_port, nil
 }
 
-func isExecutorEnabled(mlDep *machinelearningv1.SeldonDeployment) bool {
-	// useExecutor flag comes from annotation and takes the priority (default: not set)
-	useExecutor := getAnnotation(mlDep, machinelearningv1.ANNOTATION_EXECUTOR, "")
-	return useExecutor == "true" || (envUseExecutor == "true" && useExecutor != "false")
-}
-
 func getPrometheusPath(mlDep *machinelearningv1.SeldonDeployment) string {
 	prometheusPath := "/prometheus"
-	if isExecutorEnabled(mlDep) {
-		prometheusPath = utils.GetEnv(ENV_EXECUTOR_PROMETHEUS_PATH, prometheusPath)
-	} else {
-		prometheusPath = utils.GetEnv(ENV_ENGINE_PROMETHEUS_PATH, prometheusPath)
-	}
+	prometheusPath = utils.GetEnv(ENV_EXECUTOR_PROMETHEUS_PATH, prometheusPath)
 	return prometheusPath
 }
 
 func getSvcOrchSvcAccountName(mlDep *machinelearningv1.SeldonDeployment) string {
 	svcAccount := "default"
-	if isExecutorEnabled(mlDep) {
-		if svcAccountTmp, ok := os.LookupEnv("EXECUTOR_CONTAINER_SERVICE_ACCOUNT_NAME"); ok {
-			svcAccount = svcAccountTmp
-		}
-	} else {
-		if svcAccountTmp, ok := os.LookupEnv("ENGINE_CONTAINER_SERVICE_ACCOUNT_NAME"); ok {
-			svcAccount = svcAccountTmp
-		}
+	if svcAccountTmp, ok := os.LookupEnv("EXECUTOR_CONTAINER_SERVICE_ACCOUNT_NAME"); ok {
+		svcAccount = svcAccountTmp
 	}
 	return svcAccount
 }
 
 func getSvcOrchUser(mlDep *machinelearningv1.SeldonDeployment) (*int64, error) {
 
-	if isExecutorEnabled(mlDep) {
-		if envExecutorUser != "" {
-			user, err := strconv.Atoi(envExecutorUser)
-			if err != nil {
-				return nil, err
-			} else {
-				engineUser := int64(user)
-				return &engineUser, nil
-			}
-		}
-
-	} else {
-		if envEngineUser != "" {
-			user, err := strconv.Atoi(envEngineUser)
-			if err != nil {
-				return nil, err
-			} else {
-				engineUser := int64(user)
-				return &engineUser, nil
-			}
+	if envExecutorUser != "" {
+		user, err := strconv.Atoi(envExecutorUser)
+		if err != nil {
+			return nil, err
+		} else {
+			engineUser := int64(user)
+			return &engineUser, nil
 		}
 	}
 	return nil, nil
@@ -229,6 +191,11 @@ func createExecutorContainer(mlDep *machinelearningv1.SeldonDeployment, p *machi
 	//Backwards compatibility for older resources
 	if protocol == "" {
 		protocol = machinelearningv1.ProtocolSeldon
+	}
+
+	transport := mlDep.Spec.Transport
+	if transport == "" {
+		transport = machinelearningv1.TransportRest
 	}
 
 	serverType := mlDep.Spec.ServerType
@@ -249,6 +216,18 @@ func createExecutorContainer(mlDep *machinelearningv1.SeldonDeployment, p *machi
 		probeScheme = corev1.URISchemeHTTPS
 	}
 
+	loggerQSize := utils2.GetAnnotation(mlDep, machinelearningv1.ANNOTATION_LOGGER_WORK_QUEUE_SIZE, executorReqLoggerWorkQueueSize)
+	_, err := strconv.Atoi(loggerQSize)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to parse %s as integer for %s. %w", loggerQSize, ENV_EXECUTOR_REQUEST_LOGGER_WORK_QUEUE_SIZE, err)
+	}
+
+	loggerWriteTimeout := utils2.GetAnnotation(mlDep, machinelearningv1.ANNOTATION_LOGGER_WRITE_TIMEOUT_MS, executorReqLoggerWriteTimeoutMs)
+	_, err = strconv.Atoi(loggerWriteTimeout)
+	if err != nil {
+		return nil, fmt.Errorf("Failed to parse %s as integer for %s. %w", executorReqLoggerWriteTimeoutMs, ENV_EXECUTOR_REQUEST_LOGGER_WRITE_TIMEOUT_MS, err)
+	}
+
 	return &corev1.Container{
 		Name:  EngineContainerName,
 		Image: executorImage,
@@ -259,8 +238,12 @@ func createExecutorContainer(mlDep *machinelearningv1.SeldonDeployment, p *machi
 			"--http_port", strconv.Itoa(http_port),
 			"--grpc_port", strconv.Itoa(grpc_port),
 			"--protocol", string(protocol),
+			"--transport", string(transport),
 			"--prometheus_path", getPrometheusPath(mlDep),
 			"--server_type", string(serverType),
+			"--log_work_buffer_size", loggerQSize,
+			"--log_write_timeout_ms", loggerWriteTimeout,
+			fmt.Sprintf("--full_health_checks=%s", utils.GetEnv(ENV_EXECUTOR_FULL_HEALTH_CHECKS, "false")),
 		},
 		ImagePullPolicy:          corev1.PullPolicy(utils.GetEnv("EXECUTOR_CONTAINER_IMAGE_PULL_POLICY", "IfNotPresent")),
 		TerminationMessagePath:   "/dev/termination-log",
@@ -280,77 +263,19 @@ func createExecutorContainer(mlDep *machinelearningv1.SeldonDeployment, p *machi
 			{ContainerPort: int32(http_port), Protocol: corev1.ProtocolTCP, Name: executorMetricsPortName},
 			{ContainerPort: int32(grpc_port), Protocol: corev1.ProtocolTCP, Name: constants.GrpcPortName},
 		},
-		ReadinessProbe: &corev1.Probe{Handler: corev1.Handler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromInt(http_port), Path: "/ready", Scheme: probeScheme}},
+		ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromInt(http_port), Path: "/ready", Scheme: probeScheme}},
 			InitialDelaySeconds: 20,
 			PeriodSeconds:       5,
 			FailureThreshold:    3,
 			SuccessThreshold:    1,
 			TimeoutSeconds:      60},
-		LivenessProbe: &corev1.Probe{Handler: corev1.Handler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromInt(http_port), Path: "/live", Scheme: probeScheme}},
+		LivenessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromInt(http_port), Path: "/live", Scheme: probeScheme}},
 			InitialDelaySeconds: 20,
 			PeriodSeconds:       5,
 			FailureThreshold:    3,
 			SuccessThreshold:    1,
 			TimeoutSeconds:      60},
 		Resources: *resources,
-	}, nil
-}
-
-func createEngineContainerSpec(mlDep *machinelearningv1.SeldonDeployment, p *machinelearningv1.PredictorSpec, predictorB64 string,
-	engine_http_port int, engine_grpc_port int, engineResources *corev1.ResourceRequirements) (*corev1.Container, error) {
-
-	// Get engine image from env vars in order of priority
-	var engineImage string
-	if engineImage = envEngineImageRelated; engineImage == "" {
-		if engineImage = envEngineImage; engineImage == "" {
-			return nil, fmt.Errorf("Failed to find engine image from environment. Check %s or %s are set.", ENV_ENGINE_IMAGE, ENV_ENGINE_IMAGE_RELATED)
-		}
-	}
-	return &corev1.Container{
-		Name:                     EngineContainerName,
-		Image:                    engineImage,
-		ImagePullPolicy:          corev1.PullPolicy(utils.GetEnv("ENGINE_CONTAINER_IMAGE_PULL_POLICY", "IfNotPresent")),
-		TerminationMessagePath:   "/dev/termination-log",
-		TerminationMessagePolicy: corev1.TerminationMessageReadFile,
-		VolumeMounts: []corev1.VolumeMount{
-			{
-				Name:      machinelearningv1.PODINFO_VOLUME_NAME,
-				MountPath: machinelearningv1.PODINFO_VOLUME_PATH,
-			},
-		},
-		Env: []corev1.EnvVar{
-			{Name: "ENGINE_PREDICTOR", Value: predictorB64},
-			{Name: "DEPLOYMENT_NAME", Value: mlDep.Name},
-			{Name: "DEPLOYMENT_NAMESPACE", Value: mlDep.ObjectMeta.Namespace},
-			{Name: "ENGINE_SERVER_PORT", Value: strconv.Itoa(engine_http_port)},
-			{Name: "ENGINE_SERVER_GRPC_PORT", Value: strconv.Itoa(engine_grpc_port)},
-			{Name: "JAVA_OPTS", Value: getAnnotation(mlDep, machinelearningv1.ANNOTATION_JAVA_OPTS, "-server")},
-		},
-		Ports: []corev1.ContainerPort{
-			{ContainerPort: int32(engine_http_port), Protocol: corev1.ProtocolTCP, Name: constants.HttpPortName},
-			{ContainerPort: int32(engine_http_port), Protocol: corev1.ProtocolTCP, Name: executorMetricsPortName},
-			{ContainerPort: int32(engine_grpc_port), Protocol: corev1.ProtocolTCP, Name: constants.GrpcPortName},
-			{ContainerPort: 8082, Name: "admin", Protocol: corev1.ProtocolTCP},
-			{ContainerPort: 9090, Name: "jmx", Protocol: corev1.ProtocolTCP},
-		},
-		ReadinessProbe: &corev1.Probe{Handler: corev1.Handler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromString("admin"), Path: "/ready", Scheme: corev1.URISchemeHTTPS}},
-			InitialDelaySeconds: 20,
-			PeriodSeconds:       5,
-			FailureThreshold:    3,
-			SuccessThreshold:    1,
-			TimeoutSeconds:      60},
-		LivenessProbe: &corev1.Probe{Handler: corev1.Handler{HTTPGet: &corev1.HTTPGetAction{Port: intstr.FromString("admin"), Path: "/live", Scheme: corev1.URISchemeHTTPS}},
-			InitialDelaySeconds: 20,
-			PeriodSeconds:       5,
-			FailureThreshold:    3,
-			SuccessThreshold:    1,
-			TimeoutSeconds:      60},
-		Lifecycle: &corev1.Lifecycle{
-			PreStop: &corev1.Handler{
-				Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", "curl 127.0.0.1:" + strconv.Itoa(engine_http_port) + "/pause; /bin/sleep 10"}},
-			},
-		},
-		Resources: *engineResources,
 	}, nil
 }
 
@@ -368,7 +293,7 @@ func createEngineContainer(mlDep *machinelearningv1.SeldonDeployment, p *machine
 	// Set replicas to zero to ensure this doesn't cause a diff in the resulting deployment created
 	var replicasCopy int32 = 0
 	pCopy.Replicas = &replicasCopy
-	predictorB64, err := getEngineVarJson(pCopy)
+	predictorB64, err := utils2.GetEngineVarJson(pCopy)
 	if err != nil {
 		return nil, err
 	}
@@ -380,17 +305,12 @@ func createEngineContainer(mlDep *machinelearningv1.SeldonDeployment, p *machine
 		var cpu_limit resource.Quantity
 		var memory_request resource.Quantity
 		var memory_limit resource.Quantity
-		if isExecutorEnabled(mlDep) {
-			cpu_request = resource.MustParse(executorDefaultCpuRequest)
-			cpu_limit = resource.MustParse(executorDefaultCpuLimit)
-			memory_request = resource.MustParse(executorDefaultMemoryRequest)
-			memory_limit = resource.MustParse(executorDefaultMemoryLimit)
-		} else {
-			cpu_request = resource.MustParse(engineDefaultCpuRequest)
-			cpu_limit = resource.MustParse(engineDefaultCpuLimit)
-			memory_request = resource.MustParse(engineDefaultMemoryRequest)
-			memory_limit = resource.MustParse(engineDefaultMemoryLimit)
-		}
+
+		cpu_request = resource.MustParse(executorDefaultCpuRequest)
+		cpu_limit = resource.MustParse(executorDefaultCpuLimit)
+		memory_request = resource.MustParse(executorDefaultMemoryRequest)
+		memory_limit = resource.MustParse(executorDefaultMemoryLimit)
+
 		engineResources = &corev1.ResourceRequirements{
 			Requests: map[corev1.ResourceName]resource.Quantity{
 				corev1.ResourceCPU:    cpu_request,
@@ -404,28 +324,22 @@ func createEngineContainer(mlDep *machinelearningv1.SeldonDeployment, p *machine
 	}
 
 	var c *corev1.Container
-	if isExecutorEnabled(mlDep) {
-		executor_http_port, err := getExecutorHttpPort()
-		if err != nil {
-			return nil, err
-		}
-		executor_grpc_port, err := getExecutorGrpcPort()
-		if err != nil {
-			return nil, err
-		}
-		c, err = createExecutorContainer(mlDep, p, predictorB64, executor_http_port, executor_grpc_port, engineResources)
-		if err != nil {
-			return nil, err
-		}
-	} else {
-		c, err = createEngineContainerSpec(mlDep, p, predictorB64, engine_http_port, engine_grpc_port, engineResources)
-		if err != nil {
-			return nil, err
-		}
+	executor_http_port, err := getExecutorHttpPort()
+	if err != nil {
+		return nil, err
+	}
+	executor_grpc_port, err := getExecutorGrpcPort()
+	if err != nil {
+		return nil, err
+	}
+	c, err = createExecutorContainer(mlDep, p, predictorB64, executor_http_port, executor_grpc_port, engineResources)
+	if err != nil {
+		return nil, err
 	}
 
 	if engineUser != nil {
-		c.SecurityContext = &corev1.SecurityContext{RunAsUser: engineUser}
+		escalationDefault := false
+		c.SecurityContext = &corev1.SecurityContext{RunAsUser: engineUser, AllowPrivilegeEscalation: &escalationDefault}
 	}
 
 	// Environment vars if specified
@@ -437,7 +351,7 @@ func createEngineContainer(mlDep *machinelearningv1.SeldonDeployment, p *machine
 		}
 	}
 
-	engineEnvVarsFromAnnotations := getEngineEnvAnnotations(mlDep)
+	engineEnvVarsFromAnnotations := utils2.GetEngineEnvAnnotations(mlDep)
 	for _, envVar := range engineEnvVarsFromAnnotations {
 		//don't add env vars that are already present in svcOrchSpec
 		if _, ok := svcOrchEnvMap[envVar.Name]; ok {
@@ -450,11 +364,6 @@ func createEngineContainer(mlDep *machinelearningv1.SeldonDeployment, p *machine
 
 	}
 
-	if _, ok := svcOrchEnvMap["SELDON_LOG_MESSAGES_EXTERNALLY"]; ok {
-		//this env var is set already so no need to set a default
-	} else {
-		c.Env = append(c.Env, corev1.EnvVar{Name: "SELDON_LOG_MESSAGES_EXTERNALLY", Value: utils.GetEnv("ENGINE_LOG_MESSAGES_EXTERNALLY", "false")})
-	}
 	return c, nil
 }
 
@@ -473,7 +382,7 @@ func createEngineDeployment(mlDep *machinelearningv1.SeldonDeployment, p *machin
 	deploy := &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      depName,
-			Namespace: getNamespace(mlDep),
+			Namespace: utils2.GetNamespace(mlDep),
 			Labels: map[string]string{
 				machinelearningv1.Label_svc_orch:   "true",
 				machinelearningv1.Label_seldon_app: seldonId,
@@ -513,7 +422,7 @@ func createEngineDeployment(mlDep *machinelearningv1.SeldonDeployment, p *machin
 					RestartPolicy: corev1.RestartPolicyAlways,
 				},
 			},
-			Strategy: appsv1.DeploymentStrategy{RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &intstr.IntOrString{StrVal: "10%"}}},
+			Strategy: appsv1.DeploymentStrategy{Type: appsv1.RollingUpdateDeploymentStrategyType, RollingUpdate: &appsv1.RollingUpdateDeployment{MaxUnavailable: &intstr.IntOrString{StrVal: "10%"}}},
 		},
 	}
 

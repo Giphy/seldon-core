@@ -42,8 +42,8 @@ if [[ ${KIND_EXIT_VALUE} -eq 0 ]]; then
 
     run_end_to_end_tests() {
 
-        echo "Files changed in python folder:"
-        git --no-pager diff --exit-code --name-only origin/master ../../python
+        echo "Files changed in python or wrapper folder:"
+        git --no-pager diff --exit-code --name-only origin/master ../../python ../../wrappers/s2i/python
         PYTHON_MODIFIED=$?
         if [[ $PYTHON_MODIFIED -gt 0 ]]; then
             make s2i_build_base_images
@@ -70,25 +70,6 @@ if [[ ${KIND_EXIT_VALUE} -eq 0 ]]; then
             echo "SKIPPING OPERATOR IMAGE BUILD..."
         fi
 
-        echo "Files changed in engine folder:"
-        git --no-pager diff --exit-code --name-only origin/master ../../engine
-        ENGINE_MODIFIED=$?
-        if [[ $ENGINE_MODIFIED -gt 0 ]]; then
-            make build_protos
-            PROTO_EXIT_VALUE=$?
-            if [[ $PROTO_EXIT_VALUE -gt 0 ]]; then
-                return 1
-            fi
-            make kind_build_engine
-            ENGINE_EXIT_VALUE=$?
-            if [[ $ENGINE_EXIT_VALUE -gt 0 ]]; then
-                echo "Engine build returned errors"
-                return 1
-            fi
-        else
-            echo "SKIPPING ENGINE IMAGE BUILD..."
-        fi
-
         echo "Files changed in executor folder:"
         git --no-pager diff --exit-code --name-only origin/master ../../executor
         EXECUTOR_MODIFIED=$?
@@ -103,18 +84,24 @@ if [[ ${KIND_EXIT_VALUE} -eq 0 ]]; then
             echo "SKIPPING EXECUTOR IMAGE BUILD..."
         fi
 
-        echo "Build test models"
-        make kind_build_test_models
-        KIND_BUILD_EXIT_VALUE=$?
-        if [[ $KIND_BUILD_EXIT_VALUE -gt 0 ]]; then
-            echo "Kind build has errors"
-            return 1
+        echo "Files changed in test models folder:"
+        git --no-pager diff --exit-code --name-only origin/master ../../examples/models/mean_classifier/ ../../examples/models/testing/ ../../testing/docker/echo-model/ ../../testing/docker/fixed-model
+        TEST_MODELS_MODIFIED=$?
+        if [[ $TEST_MODELS_MODIFIED -gt 0 ]]; then
+            make kind_build_test_models
+            KIND_BUILD_EXIT_VALUE=$?
+            if [[ $KIND_BUILD_EXIT_VALUE -gt 0 ]]; then
+                echo "Kind build has errors"
+                return 1
+            fi
+        else
+            echo "SKIPPING TEST MODEL BUILD..."
         fi
 
-        echo "Files changed in prepackaged folder:"
+        echo "Files changed in prepackaged, python, or wrapper folder:"
         git --no-pager diff --exit-code --name-only origin/master ../../servers ../../integrations
         PREPACKAGED_MODIFIED=$?
-        if [[ $PREPACKAGED_MODIFIED -gt 0 ]]; then
+        if [[ $PREPACKAGED_MODIFIED -gt 0 ]] || [[ $PYTHON_MODIFIED -gt 0 ]]; then
             make kind_build_prepackaged
             PREPACKAGED_EXIT_VALUE=$?
             if [[ $PREPACKAGED_EXIT_VALUE -gt 0 ]]; then
@@ -153,8 +140,22 @@ if [[ ${KIND_EXIT_VALUE} -eq 0 ]]; then
             echo "SKIPPING ALIBI DETECT IMAGE BUILD..."
         fi
 
+        echo "Files changed in rclone storage initializer folder:"
+        git --no-pager diff --exit-code --name-only origin/master ../../components/rclone-storage-initializer/
+        RCLONE_STRORAGE_INITIALIZER_MODIFIED=$?
+        if [[ $RCLONE_STRORAGE_INITIALIZER_MODIFIED -gt 0 ]]; then
+            make kind_build_rclone_storage_initializer
+            RCLONE_STRORAGE_INITIALIZER_EXIT_VALUE=$?
+            if [[ $RCLONE_STRORAGE_INITIALIZER_EXIT_VALUE -gt 0 ]]; then
+                echo "rclone storage initializer build returned errors"
+                return 1
+            fi
+        else
+            echo "SKIPPING RCLONE STORAGE INITIALIZER IMAGE BUILD..."
+        fi
+
         echo "Files changed in misc folders:"
-        git --no-pager diff --exit-code --name-only origin/master ../../components/seldon-request-logger ../../components/storage-initializer ../../components/routers/epsilon-greedy
+        git --no-pager diff --exit-code --name-only origin/master ../../components/routers/epsilon-greedy
         MISC_MODIFIED=$?
         if [[ $MISC_MODIFIED -gt 0 ]]; then
             make kind_build_misc
@@ -185,15 +186,29 @@ if [[ ${KIND_EXIT_VALUE} -eq 0 ]]; then
 
         ## RUNNING TESTS AND CAPTURING ERROR
         if [ "$TESTS_TO_RUN" == "all" ]; then
-            make test_parallel test_sequential test_notebooks
+            make test_parallel
+            TEST_PARALLEL_EXIT_VALUE=$?
+            make test_sequential
+            TEST_SEQUENTIAL_EXIT_VALUE=$?
+            make test_notebooks
+            TEST_NOTEBOOK_EXIT_VALUE=$?
+            TEST_EXIT_VALUE=$(($TEST_PARALLEL_EXIT_VALUE + $TEST_SEQUENTIAL_EXIT_VALUE + $TEST_NOTEBOOK_EXIT_VALUE))
         elif [ "$TESTS_TO_RUN" == "notebooks" ]; then
             make test_notebooks
+            TEST_EXIT_VALUE=$?
         elif [ "$TESTS_TO_RUN" == "base" ]; then
-            make test_parallel test_sequential
+            make test_parallel
+            TEST_PARALLEL_EXIT_VALUE=$?
+            make test_sequential
+            TEST_SEQUENTIAL_EXIT_VALUE=$?
+            TEST_EXIT_VALUE=$(($TEST_PARALLEL_EXIT_VALUE + $TEST_SEQUENTIAL_EXIT_VALUE))
         elif [ "$TESTS_TO_RUN" == "parallel" ]; then
             make test_parallel
+            TEST_EXIT_VALUE=$?
+        elif [ "$TESTS_TO_RUN" == "benchmark" ]; then
+            make test_benchmark
+            TEST_EXIT_VALUE=$?
         fi
-        TEST_EXIT_VALUE=$?
         if [[ $TEST_EXIT_VALUE -gt 0 ]]; then
             echo "Test returned errors"
             return 1

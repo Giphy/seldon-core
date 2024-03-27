@@ -53,39 +53,6 @@ def run_command(args, debug=False):
     return err, out
 
 
-def update_pom_file(fpath, seldon_core_version, debug=False):
-    fpath = os.path.realpath(fpath)
-    if debug:
-        print("processing [{}]".format(fpath))
-    comp_dir_path = os.path.dirname(fpath)
-    cwd = os.getcwd()
-    os.chdir(comp_dir_path)
-
-    MAVEN_REPOSITORY_LOCATION = os.getenv("MAVEN_REPOSITORY_LOCATION")
-    if MAVEN_REPOSITORY_LOCATION == None:
-        args = [
-            "mvn",
-            "versions:set",
-            "-DnewVersion={seldon_core_version}".format(**locals()),
-        ]
-    else:
-        args = [
-            "mvn",
-            "versions:set",
-            "-DnewVersion={seldon_core_version}".format(**locals()),
-            "-Dmaven.repo.local={MAVEN_REPOSITORY_LOCATION}".format(**locals()),
-        ]
-
-    err, out = run_command(args, debug)
-
-    if err == None:
-        print("updated {fpath}".format(**locals()))
-    else:
-        print("error {fpath}".format(**locals()))
-        print(err)
-    os.chdir(cwd)
-
-
 def update_chart_yaml_file(fpath, seldon_core_version, debug=False):
     fpath = os.path.realpath(fpath)
     if debug:
@@ -96,6 +63,7 @@ def update_chart_yaml_file(fpath, seldon_core_version, debug=False):
 
     d = yaml_to_dict(yaml_data)
     d["version"] = seldon_core_version
+    d["appVersion"] = seldon_core_version
 
     with open(fpath, "w") as f:
         f.write(dict_to_yaml(d))
@@ -142,6 +110,33 @@ def update_operator_values_yaml_file_core_images(
         print("updated operator values yaml for core images".format(**locals()))
     else:
         print("error updating operator values yaml for core images".format(**locals()))
+        print(err)
+
+
+def update_operator_values_yaml_file_storage_initializer(
+    fpath, seldon_core_version, debug=False
+):
+    fpath = os.path.realpath(fpath)
+    if debug:
+        print("processing [{}]".format(fpath))
+    args = [
+        "sed",
+        "-i",
+        "s|seldonio/rclone-storage-initializer:\(.*\)|seldonio/rclone-storage-initializer:{seldon_core_version}|".format(
+            **locals()
+        ),
+        fpath,
+    ]
+    err, out = run_command(args, debug)
+
+    if err == None:
+        print("updated operator values yaml for storage initializer".format(**locals()))
+    else:
+        print(
+            "error updating operator values yaml for storage initializer".format(
+                **locals()
+            )
+        )
         print(err)
 
 
@@ -238,6 +233,103 @@ def update_operator_kustomize_prepackaged_images(
         print(err)
 
 
+def update_operator_kustomize_alibiexplainer_image(
+    current_seldon_core_version, fpath, seldon_core_version, debug=False
+):
+    fpath = os.path.realpath(fpath)
+    if debug:
+        print("processing [{}]".format(fpath))
+    args = [
+        "sed",
+        "-i",
+        's#seldonio/alibiexplainer:{current_seldon_core_version}#seldonio/alibiexplainer:{seldon_core_version}#'.format(
+            **locals()
+        ),
+        fpath,
+    ]
+    err, out = run_command(args, debug)
+
+    if err == None:
+        print(
+            "updated operator kustomize yaml for alibi explainer image".format(
+                **locals()
+            )
+        )
+    else:
+        print(
+            "error updating operator kustomize yaml for alibi explainer image".format(
+                **locals()
+            )
+        )
+        print(err)
+
+def update_alibi_detect_image(
+    fpath, current_seldon_core_version, seldon_core_version, debug=False
+):
+    fpath = os.path.realpath(fpath)
+    if debug:
+        print("processing [{}]".format(fpath))
+    args = [
+        "sed",
+        "-i",
+        f"s|seldonio/alibi-detect-server:{current_seldon_core_version}|seldonio/alibi-detect-server:{seldon_core_version}|",
+        fpath,
+    ]
+    err, out = run_command(args, debug)
+
+    if err is None:
+        print(f"updated alibi-detect-server version in {fpath}")
+    else:
+        print(f"error updating alibi-detect-server version in {fpath}")
+        print(err)
+
+
+def update_echo_model_image(
+    fpath, current_seldon_core_version, seldon_core_version, debug=False
+):
+    fpath = os.path.realpath(fpath)
+    if debug:
+        print("processing [{}]".format(fpath))
+    args = [
+        "sed",
+        "-i",
+        f"s|seldonio/echo-model:{current_seldon_core_version}|seldonio/echo-model:{seldon_core_version}|",
+        fpath,
+    ]
+    err, out = run_command(args, debug)
+
+    if err is None:
+        print(f"updated echo-model version in {fpath}")
+    else:
+        print(f"error updating echo-model version in {fpath}")
+        print(err)
+
+
+def update_models_version(
+    fpath, model_name, current_seldon_core_version, seldon_core_version, debug=False
+):
+    fpath = os.path.realpath(fpath)
+    if debug:
+        print("processing [{}]".format(fpath))
+    args = [
+        "sed",
+        "-i",
+        f"s|gs://seldon-models/v{current_seldon_core_version}/{model_name}|gs://seldon-models/v{seldon_core_version}/{model_name}|",
+        fpath,
+    ]
+    err, out = run_command(args, debug)
+
+    if err == None:
+        print(
+            f"updated model uri gs://seldon-models/v:{seldon_core_version}{model_name} in {fpath}"
+        )
+    else:
+        print(
+            f"error updating model uri gs://seldon-models/v:{seldon_core_version}{model_name} in {fpath}"
+        )
+        print(err)
+
+
 def update_versions_txt(seldon_core_version, debug=False):
     with open("version.txt", "w") as f:
         f.write("{seldon_core_version}\n".format(**locals()))
@@ -247,7 +339,7 @@ def update_versions_txt(seldon_core_version, debug=False):
 def get_current_version():
     with open("version.txt", "r") as f:
         version = f.read()
-        print("Current version fron version.txt", version)
+        print("Current version from version.txt:", version)
         return version.strip()
 
 
@@ -264,24 +356,6 @@ def update_versions_py(seldon_core_version, debug=False):
     with open("python/seldon_core/version.py", "w") as f:
         f.write('__version__ = "{seldon_core_version}"\n'.format(**locals()))
     print("Updated python/seldon_core/version.py")
-
-
-def update_kustomize_engine_version(seldon_core_version, debug=False):
-    args = [
-        "sed",
-        "-i",
-        "s/docker.io\/seldonio\/engine:\(.*\)/docker.io\/seldonio\/engine:{seldon_core_version}/g".format(
-            **locals()
-        ),
-        "operator/config/manager/manager.yaml",
-    ]
-    err, out = run_command(args, debug)
-
-    if err == None:
-        print("updated kustomize".format(**locals()))
-    else:
-        print("error updating kustomize".format(**locals()))
-        print(err)
 
 
 def update_kustomize_executor_version(seldon_core_version, debug=False):
@@ -344,13 +418,10 @@ def update_image_metadata_json(seldon_core_version, debug=False):
 def update_dockerfile_label_version(seldon_core_version, debug=False):
     paths = [
         "operator/Dockerfile.redhat",
-        "engine/Dockerfile.redhat",
         "executor/Dockerfile.executor",
         "executor/Dockerfile.executor.redhat",
         "servers/tfserving/Dockerfile.redhat",
         "components/alibi-detect-server/Dockerfile",
-        "components/storage-initializer/Dockerfile",
-        "components/seldon-request-logger/Dockerfile",
         "components/alibi-explain-server/Dockerfile",
     ]
     replaces = [
@@ -393,18 +464,19 @@ def update_python_wrapper_fixed_versions(seldon_core_version, debug=False):
 def set_version(
     current_seldon_core_version,
     seldon_core_version,
-    pom_files,
     chart_yaml_files,
     operator_values_yaml_file,
     operator_kustomize_yaml_file,
+    alibi_detect_image_files,
+    echo_model_image_files,
     abtest_yaml_file,
     mab_yaml_file,
+    model_uri_updates,
     debug=False,
 ):
     update_python_wrapper_fixed_versions(seldon_core_version, debug)
 
     # Normalize file paths
-    pom_files_realpaths = [os.path.realpath(x) for x in pom_files]
     chart_yaml_file_realpaths = [os.path.realpath(x) for x in chart_yaml_files]
     operator_values_yaml_file_realpath = (
         os.path.realpath(operator_values_yaml_file)
@@ -424,7 +496,6 @@ def set_version(
     )
 
     # Update kustomize
-    update_kustomize_engine_version(seldon_core_version, debug)
     update_kustomize_executor_version(seldon_core_version, debug)
     #
     # Update operator version
@@ -435,10 +506,6 @@ def set_version(
     #
     # Update version.py in python/seldon_core
     update_versions_py(seldon_core_version, debug)
-    #
-    # update the pom files
-    for fpath in pom_files_realpaths:
-        update_pom_file(fpath, seldon_core_version, debug)
 
     # update the helm chart files
     for chart_yaml_file_realpath in chart_yaml_file_realpaths:
@@ -470,6 +537,9 @@ def set_version(
         update_operator_values_yaml_file_explainer_image(
             operator_values_yaml_file_realpath, seldon_core_version, debug
         )
+        update_operator_values_yaml_file_storage_initializer(
+            operator_values_yaml_file_realpath, seldon_core_version, debug
+        )
 
     if operator_kustomize_yaml_file != None:
         update_operator_kustomize_prepackaged_images(
@@ -478,6 +548,27 @@ def set_version(
             seldon_core_version,
             debug,
         )
+        update_operator_kustomize_alibiexplainer_image(
+            current_seldon_core_version,
+            operator_kustomize_yaml_file_realpath,
+            seldon_core_version,
+            debug,
+        )
+
+    # update models' uris
+    for model_name, paths in model_uri_updates.items():
+        for fpath in paths:
+            update_models_version(
+                fpath, model_name, current_seldon_core_version, seldon_core_version
+            )
+
+    # update alibi detect image references
+    for fpath in alibi_detect_image_files:
+        update_alibi_detect_image(fpath, current_seldon_core_version, seldon_core_version)
+
+    # update echo image references
+    for fpath in echo_model_image_files:
+        update_echo_model_image(fpath, current_seldon_core_version, seldon_core_version)
 
     # Update image version labels
     update_image_metadata_json(seldon_core_version, debug)
@@ -485,7 +576,6 @@ def set_version(
 
 
 def main(argv):
-    POM_FILES = ["engine/pom.xml"]
     CHART_YAML_FILES = [
         "helm-charts/seldon-core-operator/Chart.yaml",
         "helm-charts/seldon-core-analytics/Chart.yaml",
@@ -495,6 +585,64 @@ def main(argv):
     AB_VALUES_YAML_FILE = "helm-charts/seldon-abtest/values.yaml"
     MAB_VALUES_YAML_FILE = "helm-charts/seldon-mab/values.yaml"
 
+    MODEL_URI_UPDATES = {
+        "sklearn/iris": [
+            "servers/sklearnserver/samples/iris.yaml",
+            "servers/sklearnserver/samples/iris_custom.yaml",
+            "servers/sklearnserver/samples/iris_predict.yaml",
+            "testing/benchmarking/automated-benchmark/README.ipynb",
+            "testing/scripts/test_benchmark.py",
+            "notebooks/server_examples.ipynb",
+            "notebooks/resources/istio_shadow.yaml",
+            "examples/streaming/knative-eventing/README.ipynb",
+            "examples/streaming/knative-eventing/README.md",
+            "examples/streaming/knative-eventing/assets/simple-iris-deployment.yaml",
+            "examples/security/ssl_requests/README.ipynb",
+            "examples/security/ssl_requests/README.md",
+            "examples/iter8/progressive_rollout/separate_sdeps/abtest.ipynb",
+            "examples/iter8/progressive_rollout/separate_sdeps/baseline.yaml",
+            "examples/iter8/progressive_rollout/single_sdep/abtest.ipynb",
+            "examples/iter8/progressive_rollout/single_sdep/abtest.yaml",
+            "examples/iter8/progressive_rollout/single_sdep/promote-v1.yaml",
+            "examples/init_containers/custom_init_container.ipynb",
+            "examples/feedback/feedback-metrics-server/README.ipynb",
+            "examples/feedback/feedback-metrics-server/README.md",
+            "examples/feedback/metrics-server/README.ipynb",
+            "examples/feedback/metrics-server/README.md",
+            "examples/batch/argo-workflows-batch/helm-charts/seldon-batch-workflow/values.yaml",
+            "examples/batch/hdfs-argo-workflows/deployment.yaml",
+            "examples/batch/hdfs-argo-workflows/hdfs-batch.ipynb",
+            "examples/batch/kubeflow-pipelines-batch/README.ipynb",
+            "examples/batch/kubeflow-pipelines-batch/README.md",
+            "examples/batch/kubeflow-pipelines-batch/assets/seldon-batch-pipeline.py",
+            "doc/source/workflow/quickstart.md",
+            "doc/source/servers/overview.md",
+            "doc/source/servers/sklearn.md",
+            "doc/source/graph/protocols.md",
+            "doc/source/rollouts/abtests.md",
+            "README.md",
+        ],
+        "sklearn/moviesentiment": [
+            "testing/resources/movies-text-explainer.yaml",
+            "notebooks/explainer_examples.ipynb",
+            "notebooks/resources/moviesentiment_explainer.yaml",
+        ],
+        "elasticnet_wine": [
+            "notebooks/server_examples.ipynb",
+        ],
+    }
+
+    ALIBI_DETECT_FILES = [
+        "testing/resources/adserver-cifar10-od-rclone.yaml",
+        "testing/resources/adserver-cifar10-od.yaml",
+        "examples/feedback/metrics-server/README.ipynb",
+        "examples/feedback/feedback-metrics-server/README.md",
+    ]
+
+    ECHO_MODEL_FILES = [
+        "examples/models/metrics/metrics.ipynb",
+    ]
+
     opts = getOpts(argv[1:])
     current_version = get_current_version()
     if opts.debug:
@@ -502,12 +650,14 @@ def main(argv):
     set_version(
         current_version,
         opts.seldon_core_version,
-        POM_FILES,
         CHART_YAML_FILES,
         OPERATOR_VALUES_YAML_FILE,
         OPERATOR_KUSTOMIZE_CONFIGMAP,
+        ALIBI_DETECT_FILES,
+        ECHO_MODEL_FILES,
         AB_VALUES_YAML_FILE,
         MAB_VALUES_YAML_FILE,
+        MODEL_URI_UPDATES,
         opts.debug,
     )
 

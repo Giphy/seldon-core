@@ -2,16 +2,18 @@ package kafka
 
 import (
 	"context"
+
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/opentracing/opentracing-go"
 	"github.com/opentracing/opentracing-go/ext"
 	"github.com/seldonio/seldon-core/executor/api/payload"
 	"github.com/seldonio/seldon-core/executor/predictor"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 type KafkaJob struct {
 	headers    map[string][]string
+	message    *kafka.Message
 	reqPayload payload.SeldonPayload
 }
 
@@ -62,10 +64,22 @@ func (ks *SeldonKafkaServer) processKafkaRequest(job *KafkaJob) {
 
 	err = ks.Producer.Produce(&kafka.Message{
 		TopicPartition: kafka.TopicPartition{Topic: &ks.TopicOut, Partition: kafka.PartitionAny},
+		Key:            job.message.Key,
 		Value:          resBytes,
 		Headers:        kafkaHeaders,
 	}, nil)
+
 	if err != nil {
 		ks.Log.Error(err, "Failed to produce response")
 	}
+
+	// Commit the messages here
+	if !ks.AutoCommit {
+		_, err = ks.Consumer.CommitMessage(job.message)
+
+		if err != nil {
+			ks.Log.Error(err, "Failed to commit offsets")
+		}
+	}
+
 }

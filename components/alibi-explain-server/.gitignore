@@ -1,2 +1,5 @@
+dist
 models
 test_models
+venv
+artifacts

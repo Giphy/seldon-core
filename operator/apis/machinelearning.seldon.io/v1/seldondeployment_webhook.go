@@ -17,22 +17,24 @@ limitations under the License.
 package v1
 
 import (
+	"fmt"
+	"os"
+
 	"github.com/seldonio/seldon-core/operator/constants"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/util/validation/field"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 var (
 	// log is for logging in this package.
-	seldondeploymentlog                 = logf.Log.WithName("seldondeployment")
+	seldondeploymentLog                 = logf.Log.WithName("seldondeployment")
 	ControllerNamespace                 = GetEnv("POD_NAMESPACE", "seldon-system")
 	C                                   client.Client
 	envPredictiveUnitHttpServicePort    = os.Getenv(ENV_PREDICTIVE_UNIT_HTTP_SERVICE_PORT)
@@ -69,6 +71,19 @@ func GetContainerForPredictiveUnit(p *PredictorSpec, name string) *corev1.Contai
 	return nil
 }
 
+func GetComponentSpecIdxForPredictiveUnit(p *PredictorSpec, name string) int {
+	for j := 0; j < len(p.ComponentSpecs); j++ {
+		cSpec := p.ComponentSpecs[j]
+		for k := 0; k < len(cSpec.Spec.Containers); k++ {
+			c := &cSpec.Spec.Containers[k]
+			if c.Name == name {
+				return j
+			}
+		}
+	}
+	return 0
+}
+
 // --- Validating
 
 // Check the predictive units to ensure the graph matches up with defined containers.
@@ -80,19 +95,20 @@ func (r *SeldonDeploymentSpec) checkPredictiveUnits(pu *PredictiveUnit, p *Predi
 			allErrs = append(allErrs, field.Invalid(fldPath, pu.Name, "Can't find container for Predictive Unit"))
 		}
 
-		if *pu.Type == UNKNOWN_TYPE && (pu.Methods == nil || len(*pu.Methods) == 0) {
+		if pu.Type != nil && *pu.Type == UNKNOWN_TYPE && (pu.Methods == nil || len(*pu.Methods) == 0) {
 			allErrs = append(allErrs, field.Invalid(fldPath, pu.Name, "Predictive Unit has no implementation methods defined. Change to a known type or add what methods it defines"))
 		}
 
 	} else if IsPrepack(pu) {
-		if pu.ModelURI == "" {
+		// Only HuggingFace server is allowed for no ModelURI as it can load from Hub
+		if pu.ModelURI == "" && (pu.Implementation == nil || *pu.Implementation != PrepackHuggingFaceName) {
 			allErrs = append(allErrs, field.Invalid(fldPath, pu.Name, "Predictive unit modelUri required when using standalone servers"))
 		}
 		c := GetContainerForPredictiveUnit(p, pu.Name)
 
 		//Current non tensorflow serving prepack servers can not handle tensorflow protocol
-		if r.Protocol == ProtocolTensorflow && (*pu.Implementation == PrepackSklearnName || *pu.Implementation == PrepackXgboostName || *pu.Implementation == PrepackMlflowName) {
-			allErrs = append(allErrs, field.Invalid(fldPath, pu.Name, "Prepackaged server does not handle tendorflow protocol "+string(*pu.Implementation)))
+		if r.Protocol == ProtocolTensorflow && (*pu.Implementation == PrepackSklearnName || *pu.Implementation == PrepackXGBoostName || *pu.Implementation == PrepackMLFlowName || *pu.Implementation == PrepackHuggingFaceName) {
+			allErrs = append(allErrs, field.Invalid(fldPath, pu.Name, "Prepackaged server does not handle tensorflow protocol "+string(*pu.Implementation)))
 		}
 
 		if c == nil || c.Image == "" {
@@ -100,7 +116,7 @@ func (r *SeldonDeploymentSpec) checkPredictiveUnits(pu *PredictiveUnit, p *Predi
 			ServersConfigs, err := getPredictorServerConfigs()
 
 			if err != nil {
-				seldondeploymentlog.Error(err, "Failed to read prepacked model servers from configmap")
+				seldondeploymentLog.Error(err, "Failed to read prepacked model servers from configmap")
 			}
 
 			_, ok := ServersConfigs[string(*pu.Implementation)]
@@ -128,13 +144,17 @@ func checkTraffic(spec *SeldonDeploymentSpec, fldPath *field.Path, allErrs field
 	var shadows int = 0
 	for i := 0; i < len(spec.Predictors); i++ {
 		p := spec.Predictors[i]
-		trafficSum = trafficSum + p.Traffic
 
 		if p.Shadow == true {
 			shadows += 1
 			if shadows > 1 {
 				allErrs = append(allErrs, field.Invalid(fldPath, spec.Predictors[i].Name, "Multiple shadows are not allowed"))
 			}
+			if p.Traffic < 0 || p.Traffic > 100 {
+				allErrs = append(allErrs, field.Invalid(fldPath, spec.Predictors[i].Name, "shadow traffic is illegal, the traffic number should be between [0, 100]"))
+			}
+		} else {
+			trafficSum = trafficSum + p.Traffic
 		}
 	}
 
@@ -171,6 +191,20 @@ const (
 	ENV_KAFKA_OUTPUT_TOPIC = "KAFKA_OUTPUT_TOPIC"
 )
 
+func (r *SeldonDeploymentSpec) validateSvcNameAnnotations(allErrs field.ErrorList) field.ErrorList {
+	keys := make(map[string]bool)
+	for i, p := range r.Predictors {
+		if annotation, hasAnnotation := p.Annotations[ANNOTATION_CUSTOM_SVC_NAME]; hasAnnotation {
+			if _, found := keys[annotation]; found {
+				fldPath := field.NewPath("spec").Child("predictors").Index(i)
+				allErrs = append(allErrs, field.Invalid(fldPath, p.Name, fmt.Sprintf("Found duplicate service name in %s with value %s", ANNOTATION_CUSTOM_SVC_NAME, annotation)))
+			}
+			keys[annotation] = true
+		}
+	}
+	return allErrs
+}
+
 func (r *SeldonDeploymentSpec) validateKafka(allErrs field.ErrorList) field.ErrorList {
 	if r.ServerType == ServerKafka {
 		for i, p := range r.Predictors {
@@ -206,7 +240,7 @@ func (r *SeldonDeploymentSpec) validateShadow(allErrs field.ErrorList) field.Err
 func (r *SeldonDeploymentSpec) ValidateSeldonDeployment() error {
 	var allErrs field.ErrorList
 
-	if r.Protocol != "" && !(r.Protocol == ProtocolSeldon || r.Protocol == ProtocolTensorflow || r.Protocol == ProtocolKfserving) {
+	if r.Protocol != "" && !(r.Protocol == ProtocolSeldon || r.Protocol == ProtocolTensorflow || r.Protocol == ProtocolKFServing || r.Protocol == ProtocolV2) {
 		fldPath := field.NewPath("spec")
 		allErrs = append(allErrs, field.Invalid(fldPath, r.Protocol, "Invalid protocol"))
 	}
@@ -223,6 +257,7 @@ func (r *SeldonDeploymentSpec) ValidateSeldonDeployment() error {
 
 	allErrs = r.validateKafka(allErrs)
 	allErrs = r.validateShadow(allErrs)
+	allErrs = r.validateSvcNameAnnotations(allErrs)
 
 	transports := make(map[EndpointType]bool)
 
@@ -280,25 +315,25 @@ func (r *SeldonDeploymentSpec) ValidateSeldonDeployment() error {
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// +kubebuilder:webhook:webhookVersions=v1beta1,verbs=create;update,path=/validate-machinelearning-seldon-io-v1-seldondeployment,mutating=false,failurePolicy=fail,sideEffects=None,admissionReviewVersions=v1;v1beta1,groups=machinelearning.seldon.io,resources=seldondeployments,versions=v1,name=v1.vseldondeployment.kb.io
+// +kubebuilder:webhook:webhookVersions=v1,verbs=create;update,path=/validate-machinelearning-seldon-io-v1-seldondeployment,mutating=false,failurePolicy=fail,sideEffects=None,admissionReviewVersions=v1;v1beta1,groups=machinelearning.seldon.io,resources=seldondeployments,versions=v1,name=v1.vseldondeployment.kb.io
 
 var _ webhook.Validator = &SeldonDeployment{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateCreate() error {
-	seldondeploymentlog.Info("Validating v1 Webhook called for CREATE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1 Webhook called for CREATE", "name", r.Name)
 	return r.Spec.ValidateSeldonDeployment()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateUpdate(old runtime.Object) error {
-	seldondeploymentlog.Info("Validating v1 webhook called for UPDATE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1 webhook called for UPDATE", "name", r.Name)
 	return r.Spec.ValidateSeldonDeployment()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateDelete() error {
-	seldondeploymentlog.Info("Validating v1 webhook called for DELETE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1 webhook called for DELETE", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object deletion.
 	return nil

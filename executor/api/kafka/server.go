@@ -2,6 +2,13 @@ package kafka
 
 import (
 	"fmt"
+	"net/url"
+	"os"
+	"os/signal"
+	"reflect"
+	"syscall"
+	"time"
+
 	"github.com/cloudevents/sdk-go/pkg/bindings/http"
 	"github.com/confluentinc/confluent-kafka-go/kafka"
 	"github.com/go-logr/logr"
@@ -13,14 +20,9 @@ import (
 	"github.com/seldonio/seldon-core/executor/api/grpc/tensorflow"
 	"github.com/seldonio/seldon-core/executor/api/payload"
 	"github.com/seldonio/seldon-core/executor/api/rest"
+	"github.com/seldonio/seldon-core/executor/api/util"
 	"github.com/seldonio/seldon-core/executor/predictor"
 	v1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
-	"net/url"
-	"os"
-	"os/signal"
-	"reflect"
-	"syscall"
-	"time"
 )
 
 const (
@@ -34,26 +36,48 @@ const (
 	ENV_KAFKA_OUTPUT_TOPIC = "KAFKA_OUTPUT_TOPIC"
 	ENV_KAFKA_FULL_GRAPH   = "KAFKA_FULL_GRAPH"
 	ENV_KAFKA_WORKERS      = "KAFKA_WORKERS"
+	ENV_KAFKA_AUTO_COMMIT  = "KAFKA_AUTO_COMMIT"
 )
 
 type SeldonKafkaServer struct {
-	Client         client.SeldonApiClient
-	Producer       *kafka.Producer
-	DeploymentName string
-	Namespace      string
-	Transport      string
-	Predictor      *v1.PredictorSpec
-	Broker         string
-	TopicIn        string
-	TopicOut       string
-	ServerUrl      *url.URL
-	Workers        int
-	Log            logr.Logger
+	Client          client.SeldonApiClient
+	Producer        *kafka.Producer
+	Consumer        *kafka.Consumer
+	DeploymentName  string
+	Namespace       string
+	Transport       string
+	Predictor       *v1.PredictorSpec
+	Broker          string
+	TopicIn         string
+	TopicOut        string
+	ServerUrl       *url.URL
+	Workers         int
+	Log             logr.Logger
+	Protocol        string
+	FullHealthCheck bool
+	AutoCommit      bool
 }
 
-func NewKafkaServer(fullGraph bool, workers int, deploymentName, namespace, protocol, transport string, annotations map[string]string, serverUrl *url.URL, predictor *v1.PredictorSpec, broker, topicIn, topicOut string, log logr.Logger) (*SeldonKafkaServer, error) {
+func NewKafkaServer(
+	fullGraph bool,
+	workers int,
+	deploymentName,
+	namespace,
+	protocol,
+	transport string,
+	annotations map[string]string,
+	serverUrl *url.URL,
+	predictor *v1.PredictorSpec,
+	broker,
+	topicIn,
+	topicOut string,
+	log logr.Logger,
+	fullHealthCheck bool,
+	autoCommit bool,
+) (*SeldonKafkaServer, error) {
 	var apiClient client.SeldonApiClient
 	var err error
+
 	if fullGraph {
 		log.Info("Starting full graph kafka server")
 		apiClient = NewKafkaClient(serverUrl.Hostname(), deploymentName, namespace, protocol, transport, predictor, broker, log)
@@ -77,27 +101,39 @@ func NewKafkaServer(fullGraph bool, workers int, deploymentName, namespace, prot
 		}
 	}
 
+	var producerConfig *kafka.ConfigMap
+	if broker != "" {
+		producerConfig = util.GetKafkaProducerConfig(broker)
+	}
+
+	if !autoCommit && workers > 1 {
+		log.Info("Disabling auto commit for kafka can have undesired side effects with multiple workers")
+	}
+
 	// Create Producer
 	log.Info("Creating producer", "broker", broker)
-	p, err := kafka.NewProducer(&kafka.ConfigMap{"bootstrap.servers": broker})
+	p, err := kafka.NewProducer(producerConfig)
 	if err != nil {
 		return nil, err
 	}
 	log.Info("Created", "producer", p.String())
 
 	return &SeldonKafkaServer{
-		Client:         apiClient,
-		Producer:       p,
-		DeploymentName: deploymentName,
-		Namespace:      namespace,
-		Transport:      transport,
-		Predictor:      predictor,
-		Broker:         broker,
-		TopicIn:        topicIn,
-		TopicOut:       topicOut,
-		ServerUrl:      serverUrl,
-		Workers:        workers,
-		Log:            log.WithName("KafkaServer"),
+		Client:          apiClient,
+		Producer:        p,
+		DeploymentName:  deploymentName,
+		Namespace:       namespace,
+		Transport:       transport,
+		Predictor:       predictor,
+		Broker:          broker,
+		TopicIn:         topicIn,
+		TopicOut:        topicOut,
+		ServerUrl:       serverUrl,
+		Workers:         workers,
+		Log:             log.WithName("KafkaServer"),
+		Protocol:        protocol,
+		FullHealthCheck: fullHealthCheck,
+		AutoCommit:      autoCommit,
 	}, nil
 }
 
@@ -135,16 +171,14 @@ func getProto(messageType string, messageBytes []byte) (proto2.Message, error) {
 }
 
 func (ks *SeldonKafkaServer) Serve() error {
-	c, err := kafka.NewConsumer(&kafka.ConfigMap{
-		"bootstrap.servers":     ks.Broker,
-		"broker.address.family": "v4",
-		"group.id":              ks.getGroupName(),
-		"session.timeout.ms":    6000,
-		"auto.offset.reset":     "earliest"})
+	consumerConfig := util.GetKafkaConsumerConfig(ks.Broker, ks.AutoCommit, ks.getGroupName())
+	c, err := kafka.NewConsumer(consumerConfig)
 	if err != nil {
 		return err
 	}
-	ks.Log.Info("Created", "consumer", c.String())
+
+	ks.Consumer = c
+	ks.Log.Info("Created", "consumer", c.String(), "consumer group", ks.getGroupName(), "topic", ks.TopicIn)
 
 	err = c.SubscribeTopics([]string{ks.TopicIn}, nil)
 	if err != nil {
@@ -155,9 +189,7 @@ func (ks *SeldonKafkaServer) Serve() error {
 	sigchan := make(chan os.Signal, 1)
 	signal.Notify(sigchan, syscall.SIGINT, syscall.SIGTERM)
 
-	// create a cancel channel
 	cancelChan := make(chan struct{})
-	// make a channel with a capacity of the number of workers
 	jobChan := make(chan *KafkaJob, ks.Workers)
 	for i := 0; i < ks.Workers; i++ {
 		go ks.worker(jobChan, cancelChan)
@@ -166,7 +198,7 @@ func (ks *SeldonKafkaServer) Serve() error {
 	//wait for graph to be ready
 	ready := false
 	for ready == false {
-		err := predictor.Ready(&ks.Predictor.Graph)
+		err := predictor.Ready(ks.Protocol, &ks.Predictor.Graph, ks.FullHealthCheck)
 		ready = err == nil
 		if !ready {
 			ks.Log.Info("Waiting for graph to be ready")
@@ -229,6 +261,7 @@ func (ks *SeldonKafkaServer) Serve() error {
 
 				job := KafkaJob{
 					headers:    headers,
+					message:    e,
 					reqPayload: reqPayload,
 				}
 				// enqueue a job

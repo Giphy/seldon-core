@@ -6,12 +6,14 @@ metadata:
 spec:
   template:
     spec:
+      securityContext:
+        $patch: delete
       containers:
       - env:
         - name: MANAGER_CREATE_RESOURCES
           value: "true"
         - name: ENGINE_CONTAINER_USER
-          value: ""          
+          value: ""
         - name: EXECUTOR_CONTAINER_USER
           value: ""
         name: manager

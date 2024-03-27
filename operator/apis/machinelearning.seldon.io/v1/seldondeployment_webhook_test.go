@@ -2,6 +2,8 @@ package v1
 
 import (
 	"context"
+	"testing"
+
 	. "github.com/onsi/gomega"
 	"github.com/seldonio/seldon-core/operator/constants"
 	appsv1 "k8s.io/api/apps/v1"
@@ -14,7 +16,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime/serializer"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
-	"testing"
 )
 
 func TestValidProtocolTransportServerType(t *testing.T) {
@@ -46,6 +47,38 @@ func TestValidProtocolTransportServerType(t *testing.T) {
 	}
 
 	spec.DefaultSeldonDeployment("mydep", "default")
+	err := spec.ValidateSeldonDeployment()
+	g.Expect(err).To(BeNil())
+}
+
+func TestNoGraphType(t *testing.T) {
+	g := NewGomegaWithT(t)
+	spec := &SeldonDeploymentSpec{
+		ServerType: ServerRPC,
+		Protocol:   ProtocolTensorflow,
+		Transport:  TransportGrpc,
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				ComponentSpecs: []*SeldonPodSpec{
+					{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{
+									Image: "seldonio/mock_classifier:1.0",
+									Name:  "classifier",
+								},
+							},
+						},
+					},
+				},
+				Graph: PredictiveUnit{
+					Name: "classifier",
+				},
+			},
+		},
+	}
+
 	err := spec.ValidateSeldonDeployment()
 	g.Expect(err).To(BeNil())
 }
@@ -127,7 +160,7 @@ var configs = map[string]string{
           "protocols" : {
             "kfserving": {
               "image": "nvcr.io/nvidia/tritonserver",
-              "defaultImageVersion": "20.08-py3"
+              "defaultImageVersion": "21.08-py3"
               }
             }
         },
@@ -1205,13 +1238,36 @@ func TestValidateTensorflowProtocolNormal(t *testing.T) {
 	g.Expect(err).To(BeNil())
 }
 
+func TestValidateKFservingProtocolNormal(t *testing.T) {
+	g := NewGomegaWithT(t)
+	err := setupTestConfigMap()
+	g.Expect(err).To(BeNil())
+	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
+	spec := &SeldonDeploymentSpec{
+		Protocol: ProtocolKFServing,
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+			},
+		},
+	}
+
+	spec.DefaultSeldonDeployment("mydep", "default")
+	err = spec.ValidateSeldonDeployment()
+	g.Expect(err).To(BeNil())
+}
 func TestValidateV2ProtocolNormal(t *testing.T) {
 	g := NewGomegaWithT(t)
 	err := setupTestConfigMap()
 	g.Expect(err).To(BeNil())
 	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
 	spec := &SeldonDeploymentSpec{
-		Protocol: ProtocolKfserving,
+		Protocol: ProtocolV2,
 		Predictors: []PredictorSpec{
 			{
 				Name: "p1",
@@ -1288,7 +1344,7 @@ func TestNoPredictors(t *testing.T) {
 	g.Expect(err).ToNot(BeNil())
 }
 
-func TestValidateTwoShadows(t *testing.T) {
+func TestValidateTwoShadowsNotAllowed(t *testing.T) {
 	g := NewGomegaWithT(t)
 	err := setupTestConfigMap()
 	g.Expect(err).To(BeNil())
@@ -1305,7 +1361,7 @@ func TestValidateTwoShadows(t *testing.T) {
 				},
 			},
 			{
-				Name: "p1",
+				Name: "p2",
 				Graph: PredictiveUnit{
 					Name:           "classifier",
 					Implementation: &impl,
@@ -1314,7 +1370,7 @@ func TestValidateTwoShadows(t *testing.T) {
 				Shadow: true,
 			},
 			{
-				Name: "p1",
+				Name: "p3",
 				Graph: PredictiveUnit{
 					Name:           "classifier",
 					Implementation: &impl,
@@ -1328,4 +1384,178 @@ func TestValidateTwoShadows(t *testing.T) {
 	spec.DefaultSeldonDeployment("mydep", "default")
 	err = spec.ValidateSeldonDeployment()
 	g.Expect(err).ToNot(BeNil())
+}
+
+func TestValidateShadowTrafficInvalid(t *testing.T) {
+	g := NewGomegaWithT(t)
+	err := setupTestConfigMap()
+	g.Expect(err).To(BeNil())
+	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
+	spec := &SeldonDeploymentSpec{
+		Protocol: ProtocolTensorflow,
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Traffic: 100,
+			},
+			{
+				Name: "p2",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Shadow:  true,
+				Traffic: 101,
+			},
+		},
+	}
+	spec.DefaultSeldonDeployment("mydep", "default")
+	err = spec.ValidateSeldonDeployment()
+	g.Expect(err).ToNot(BeNil())
+}
+
+func TestValidateTwoPrepackTwoPods(t *testing.T) {
+	g := NewGomegaWithT(t)
+	err := setupTestConfigMap()
+	g.Expect(err).To(BeNil())
+	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
+	spec := &SeldonDeploymentSpec{
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				ComponentSpecs: []*SeldonPodSpec{
+					{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{
+									Image: "seldonio/mock_classifier:1.0",
+									Name:  "classifier",
+								},
+							},
+						},
+					},
+					{
+						Spec: v1.PodSpec{
+							Containers: []v1.Container{
+								{
+									Name: "classifier2",
+								},
+							},
+						},
+					},
+				},
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+					Children: []PredictiveUnit{
+						{
+							Implementation: &impl,
+							Name:           "classifier2",
+							ModelURI:       "s3://mybucket/model",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	name := "mydep"
+	namespace := "default"
+	spec.DefaultSeldonDeployment(name, namespace)
+	err = spec.ValidateSeldonDeployment()
+	g.Expect(err).To(BeNil())
+	containerServiceValue := GetContainerServiceName(name, spec.Predictors[0], &spec.Predictors[0].ComponentSpecs[1].Spec.Containers[0])
+	dnsName := containerServiceValue + "." + namespace + constants.DNSClusterLocalSuffix
+	g.Expect(spec.Predictors[0].Graph.Children[0].Endpoint.ServiceHost).To(Equal(dnsName))
+}
+
+func TestSvcNameAnnotationDuplicate(t *testing.T) {
+	g := NewGomegaWithT(t)
+	scheme := runtime.NewScheme()
+	C = fake.NewFakeClientWithScheme(scheme)
+	err := setupTestConfigMap()
+	g.Expect(err).To(BeNil())
+	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
+	spec := &SeldonDeploymentSpec{
+		Transport: TransportGrpc,
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Annotations: map[string]string{
+					ANNOTATION_CUSTOM_SVC_NAME: "svc1",
+				},
+				Traffic: 50,
+			},
+			{
+				Name: "p2",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Annotations: map[string]string{
+					ANNOTATION_CUSTOM_SVC_NAME: "svc1",
+				},
+				Traffic: 50,
+			},
+		},
+	}
+
+	spec.DefaultSeldonDeployment("mydep", "default")
+	err = spec.ValidateSeldonDeployment()
+	g.Expect(err).ToNot(BeNil())
+}
+
+func TestSvcNameAnnotationNotDuplicate(t *testing.T) {
+	g := NewGomegaWithT(t)
+	scheme := runtime.NewScheme()
+	C = fake.NewFakeClientWithScheme(scheme)
+	err := setupTestConfigMap()
+	g.Expect(err).To(BeNil())
+	impl := PredictiveUnitImplementation(constants.PrePackedServerTensorflow)
+	spec := &SeldonDeploymentSpec{
+		Transport: TransportGrpc,
+		Predictors: []PredictorSpec{
+			{
+				Name: "p1",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Annotations: map[string]string{
+					ANNOTATION_CUSTOM_SVC_NAME: "svc1",
+				},
+				Traffic: 50,
+			},
+			{
+				Name: "p2",
+				Graph: PredictiveUnit{
+					Name:           "classifier",
+					Implementation: &impl,
+					ModelURI:       "s3://mybucket/model",
+				},
+				Annotations: map[string]string{
+					ANNOTATION_CUSTOM_SVC_NAME: "svc2",
+				},
+				Traffic: 50,
+			},
+		},
+	}
+
+	spec.DefaultSeldonDeployment("mydep", "default")
+	err = spec.ValidateSeldonDeployment()
+	g.Expect(err).To(BeNil())
 }

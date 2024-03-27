@@ -20,6 +20,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/go-logr/logr"
 	"strconv"
 	"strings"
 
@@ -30,14 +31,6 @@ import (
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
-)
-
-const (
-	ENV_PREDICTIVE_UNIT_DEFAULT_ENV_SECRET_REF_NAME = "PREDICTIVE_UNIT_DEFAULT_ENV_SECRET_REF_NAME"
-)
-
-var (
-	PredictiveUnitDefaultEnvSecretRefName = utils.GetEnv(ENV_PREDICTIVE_UNIT_DEFAULT_ENV_SECRET_REF_NAME, "")
 )
 
 type PrePackedInitialiser struct {
@@ -92,6 +85,8 @@ func createTensorflowServingContainer(mlDepSepc *machinelearningv1.SeldonDeploym
 				Protocol:      v1.ProtocolTCP,
 			},
 		},
+		TerminationMessagePath:   "/dev/termination-log",
+		TerminationMessagePolicy: v1.TerminationMessageReadFile,
 	}
 }
 
@@ -143,17 +138,37 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 	c := utils.GetContainerForDeployment(deploy, pu.Name)
 	existing := c != nil
 
-	tritonUser := int64(1000)
+	// Define the default arguments
+	args := []string{
+		"/opt/tritonserver/bin/tritonserver",
+		constants.TritonArgGrpcPort + strconv.Itoa(int(pu.Endpoint.GrpcPort)),
+		constants.TritonArgHttpPort + strconv.Itoa(int(pu.Endpoint.HttpPort)),
+	}
+
+	// Triton can support loading models directory from cloud storage modelURI, enabled with "no-storage-initializer" annotation
+	// see: https://github.com/triton-inference-server/server/blob/main/docs/model_repository.md
+	noStorage := strings.ToLower(mlDepSpec.Annotations[machinelearningv1.ANNOTATION_NO_STOARGE_INITIALIZER]) == "true"
+	if !noStorage {
+		args = append(args, constants.TritonArgModelRepository+DefaultModelLocalMountPath)
+		args = append(args, constants.TritonArgStrictModelConfig+"false")
+	} else {
+		args = append(args, constants.TritonArgModelRepository+pu.ModelURI)
+		// Optionally allow "model_control_mode=explicit" and one or more "load_model=model_name" parameters
+		// see: https://github.com/triton-inference-server/server/blob/main/docs/model_management.md
+		for _, paramElement := range pu.Parameters {
+			if strings.ToLower(paramElement.Name) == "model_control_mode" {
+				args = append(args, constants.TritonArgModelControlMode+paramElement.Value)
+			} else if strings.ToLower(paramElement.Name) == "load_model" {
+				args = append(args, constants.TritonArgLoadModel+paramElement.Value)
+			} else if strings.ToLower(paramElement.Name) == "strict_model_config" {
+				args = append(args, constants.TritonArgStrictModelConfig+paramElement.Value)
+			}
+		}
+	}
 
 	cServer := &v1.Container{
 		Name: pu.Name,
-		Args: []string{
-			"/opt/tritonserver/bin/tritonserver",
-			"--grpc-port=" + strconv.Itoa(int(pu.Endpoint.GrpcPort)),
-			"--http-port=" + strconv.Itoa(int(pu.Endpoint.HttpPort)),
-			"--model-repository=" + DefaultModelLocalMountPath,
-			"--strict-model-config=false",
-		},
+		Args: args,
 		Ports: []v1.ContainerPort{
 			{
 				Name:          "grpc",
@@ -167,9 +182,10 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 			},
 		},
 		ReadinessProbe: &v1.Probe{
-			Handler: v1.Handler{HTTPGet: &v1.HTTPGetAction{
-				Path: constants.KFServingProbeReadyPath,
-				Port: intstr.FromString("http"),
+			ProbeHandler: v1.ProbeHandler{HTTPGet: &v1.HTTPGetAction{
+				Path:   constants.KFServingProbeReadyPath,
+				Port:   intstr.FromString("http"),
+				Scheme: v1.URISchemeHTTP,
 			}},
 			InitialDelaySeconds: 20,
 			TimeoutSeconds:      1,
@@ -178,9 +194,10 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 			FailureThreshold:    3,
 		},
 		LivenessProbe: &v1.Probe{
-			Handler: v1.Handler{HTTPGet: &v1.HTTPGetAction{
-				Path: constants.KFServingProbeLivePath,
-				Port: intstr.FromString("http"),
+			ProbeHandler: v1.ProbeHandler{HTTPGet: &v1.HTTPGetAction{
+				Path:   constants.KFServingProbeLivePath,
+				Port:   intstr.FromString("http"),
+				Scheme: v1.URISchemeHTTP,
 			}},
 			InitialDelaySeconds: 60,
 			TimeoutSeconds:      1,
@@ -188,17 +205,22 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 			SuccessThreshold:    1,
 			FailureThreshold:    3,
 		},
-		SecurityContext: &v1.SecurityContext{
-			RunAsUser: &tritonUser,
-		},
 		VolumeMounts: []v1.VolumeMount{
 			{
 				Name:      machinelearningv1.PODINFO_VOLUME_NAME,
 				MountPath: machinelearningv1.PODINFO_VOLUME_PATH,
 			},
 		},
+		TerminationMessagePath:   "/dev/termination-log",
+		TerminationMessagePolicy: v1.TerminationMessageReadFile,
 	}
 	cServer.Image = serverConfig.PrepackImageName(mlDepSpec.Protocol, pu)
+
+	envSecretRefName := extractEnvSecretRefName(pu)
+	if noStorage {
+		// Add secrets directly to triton server if not using storage initializer
+		addEnvFromSecret(cServer, envSecretRefName)
+	}
 
 	if existing {
 		// Overwrite core items if not existing or required
@@ -207,6 +229,9 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 		}
 		if c.Args == nil {
 			c.Args = cServer.Args
+		}
+		if c.EnvFrom == nil {
+			c.EnvFrom = cServer.EnvFrom
 		}
 		if c.ReadinessProbe == nil {
 			c.ReadinessProbe = cServer.ReadinessProbe
@@ -228,17 +253,19 @@ func (pi *PrePackedInitialiser) addTritonServer(mlDepSpec *machinelearningv1.Sel
 		}
 	}
 
-	envSecretRefName := extractEnvSecretRefName(pu)
-	mi := NewModelInitializer(pi.ctx, pi.clientset)
-	_, err := mi.InjectModelInitializer(deploy, c.Name, pu.ModelURI, pu.ServiceAccountName, envSecretRefName, pu.StorageInitializerImage)
-	if err != nil {
-		return err
+	if !noStorage {
+		mi := NewModelInitializer(pi.ctx, pi.clientset)
+		_, err := mi.InjectModelInitializer(deploy, c.Name, pu.ModelURI, pu.ServiceAccountName, envSecretRefName, pu.StorageInitializerImage)
+		if err != nil {
+			return err
+		}
 	}
+
 	return nil
 }
 
 func (pi *PrePackedInitialiser) addMLServerDefault(pu *machinelearningv1.PredictiveUnit, deploy *appsv1.Deployment) error {
-	c, err := getMLServerContainer(pu)
+	c, err := getMLServerContainer(pu, deploy.Namespace)
 	if err != nil {
 		return err
 	}
@@ -305,12 +332,11 @@ func (pi *PrePackedInitialiser) addModelDefaultServers(mlDepSepc *machinelearnin
 	}
 
 	if len(params) > 0 {
-		if !utils.HasEnvVar(c.Env, machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS) {
-			c.Env = append(c.Env, v1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS, Value: string(paramStr)})
-		} else {
-			c.Env = utils.SetEnvVar(c.Env, v1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS, Value: string(paramStr)})
+		paramsEnvVar := v1.EnvVar{
+			Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS,
+			Value: string(paramStr),
 		}
-
+		c.Env = utils.SetEnvVar(c.Env, paramsEnvVar, true)
 	}
 
 	// Add container to deployment
@@ -368,16 +394,30 @@ func SetUriParamsForTFServingProxyContainer(pu *machinelearningv1.PredictiveUnit
 	parameters = append(parameters, modelNameParam)
 
 	if len(parameters) > 0 {
-		if !utils.HasEnvVar(c.Env, machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS) {
-			c.Env = append(c.Env, v1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS, Value: utils.GetPredictiveUnitAsJson(parameters)})
-		} else {
-			c.Env = utils.SetEnvVar(c.Env, v1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS, Value: utils.GetPredictiveUnitAsJson(parameters)})
+		parametersEnvVar := v1.EnvVar{
+			Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_PARAMETERS,
+			Value: utils.GetPredictiveUnitAsJson(parameters),
 		}
-
+		c.Env = utils.SetEnvVar(c.Env, parametersEnvVar, true)
 	}
 }
 
-func (pi *PrePackedInitialiser) createStandaloneModelServers(mlDep *machinelearningv1.SeldonDeployment, p *machinelearningv1.PredictorSpec, c *components, pu *machinelearningv1.PredictiveUnit, podSecurityContext *v1.PodSecurityContext) error {
+func (pi *PrePackedInitialiser) findDeployment(c *components, depName string) (*appsv1.Deployment, bool, error) {
+	for i := 0; i < len(c.deployments); i++ {
+		d := c.deployments[i]
+		if strings.Compare(d.Name, depName) == 0 {
+			return d, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (pi *PrePackedInitialiser) addModelServersAndInitContainers(mlDep *machinelearningv1.SeldonDeployment,
+	p *machinelearningv1.PredictorSpec,
+	c *components,
+	pu *machinelearningv1.PredictiveUnit,
+	podSecurityContext *v1.PodSecurityContext,
+	log logr.Logger) error {
 
 	if machinelearningv1.IsPrepack(pu) {
 		sPodSpec, idx := utils.GetSeldonPodSpecForPredictiveUnit(p, pu.Name)
@@ -385,23 +425,16 @@ func (pi *PrePackedInitialiser) createStandaloneModelServers(mlDep *machinelearn
 			return fmt.Errorf("Failed to find PodSpec for Prepackaged server PreditiveUnit named %s", pu.Name)
 		}
 		depName := machinelearningv1.GetDeploymentName(mlDep, *p, sPodSpec, idx)
-		seldonId := machinelearningv1.GetSeldonDeploymentName(mlDep)
 
-		var deploy *appsv1.Deployment
-		existing := false
-		for i := 0; i < len(c.deployments); i++ {
-			d := c.deployments[i]
-			if strings.Compare(d.Name, depName) == 0 {
-				deploy = d
-				existing = true
-				break
-			}
+		deploy, existing, err := pi.findDeployment(c, depName)
+		if err != nil {
+			return err
 		}
 
 		// might not be a Deployment yet - if so we have to create one
 		if deploy == nil {
 			seldonId := machinelearningv1.GetSeldonDeploymentName(mlDep)
-			deploy = createDeploymentWithoutEngine(depName, seldonId, sPodSpec, p, mlDep, podSecurityContext)
+			deploy = createDeploymentWithoutEngine(depName, seldonId, sPodSpec, p, mlDep, podSecurityContext, true)
 		}
 
 		// apply serviceAccountName to pod to enable EKS fine-grained IAM roles
@@ -421,8 +454,8 @@ func (pi *PrePackedInitialiser) createStandaloneModelServers(mlDep *machinelearn
 					return err
 				}
 			default:
-				// If protocol is KFServing, try to add container with MLServer
-				if mlDep.Spec.Protocol == machinelearningv1.ProtocolKfserving {
+				// If protocol is V2, try to add container with MLServer
+				if mlDep.Spec.Protocol == machinelearningv1.ProtocolKFServing || mlDep.Spec.Protocol == machinelearningv1.ProtocolV2 {
 					err := pi.addMLServerDefault(pu, deploy)
 					if err != nil {
 						return err
@@ -438,7 +471,7 @@ func (pi *PrePackedInitialiser) createStandaloneModelServers(mlDep *machinelearn
 		}
 
 		if !existing {
-
+			seldonId := machinelearningv1.GetSeldonDeploymentName(mlDep)
 			// this is a new deployment so its containers won't have a containerService
 			for k := 0; k < len(deploy.Spec.Template.Spec.Containers); k++ {
 				con := &deploy.Spec.Template.Spec.Containers[k]
@@ -454,10 +487,35 @@ func (pi *PrePackedInitialiser) createStandaloneModelServers(mlDep *machinelearn
 				c.deployments = append(c.deployments, deploy)
 			}
 		}
+	} else if pu.ModelURI != "" { // add model uri initializer for non server components
+		sPodSpec, idx := utils.GetSeldonPodSpecForPredictiveUnit(p, pu.Name)
+		if sPodSpec == nil {
+			return fmt.Errorf("Failed to find PodSpec for Prepackaged server PreditiveUnit named %s", pu.Name)
+		}
+		depName := machinelearningv1.GetDeploymentName(mlDep, *p, sPodSpec, idx)
+
+		log.Info("Add rclone init container for predictive unit", "predictive unit", pu.Name)
+		deploy, existing, err := pi.findDeployment(c, depName)
+		if err != nil {
+			return err
+		}
+		if !existing {
+			return fmt.Errorf("Expected to find a deployment for predictive unit %s", pu.Name)
+		}
+		mi := NewModelInitializer(pi.ctx, pi.clientset)
+		c := utils.GetContainerForDeployment(deploy, pu.Name)
+		if c == nil {
+			return fmt.Errorf("Expected to find container for predictive unit %s", pu.Name)
+		}
+		envSecretRefName := extractEnvSecretRefName(pu)
+		_, err = mi.InjectModelInitializer(deploy, c.Name, pu.ModelURI, pu.ServiceAccountName, envSecretRefName, pu.StorageInitializerImage)
+		if err != nil {
+			return err
+		}
 	}
 
 	for i := 0; i < len(pu.Children); i++ {
-		if err := pi.createStandaloneModelServers(mlDep, p, c, &pu.Children[i], podSecurityContext); err != nil {
+		if err := pi.addModelServersAndInitContainers(mlDep, p, c, &pu.Children[i], podSecurityContext, log); err != nil {
 			return err
 		}
 	}

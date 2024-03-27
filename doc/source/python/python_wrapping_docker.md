@@ -58,17 +58,28 @@ Define a Dockerfile in the same directory as your source code and requirements.t
 
 ```dockerfile
 FROM python:3.7-slim
-COPY . /app
 WORKDIR /app
-RUN pip install -r requirements.txt
-EXPOSE 5000
 
-# Define environment variable
+# Install python packages
+COPY requirements.txt requirements.txt
+RUN pip install -r requirements.txt
+
+# Copy source code
+COPY . .
+
+# Port for GRPC
+EXPOSE 5000
+# Port for REST
+EXPOSE 9000
+
+# Define environment variables
 ENV MODEL_NAME MyModel
 ENV SERVICE_TYPE MODEL
-ENV PERSISTENCE 0
 
-CMD exec seldon-core-microservice $MODEL_NAME --service-type $SERVICE_TYPE --persistence $PERSISTENCE
+# Changing folder to default user
+RUN chown -R 8888 /app
+
+CMD exec seldon-core-microservice $MODEL_NAME --service-type $SERVICE_TYPE
 ```
 
 
@@ -96,9 +107,6 @@ The service type being created. Available options are:
  * COMBINER
  * OUTLIER_DETECTOR
 
-### PERSISTENCE
-
-Set either to 0 or 1. Default is 0. If set to 1 then your model will be saved periodically to redis and loaded from redis (if exists) or created fresh if not.
 
 ### Flask Settings
 

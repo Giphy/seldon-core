@@ -2,15 +2,9 @@
 
 ## Development
 
-We assume:
+You need kubebuilder envtest assets for tests to run see [here](https://book.kubebuilder.io/reference/envtest.html).
 
- * Go 1.13
- * Kubebuilder 2.3.0
-
-### Issues
-
- * Generated CRD is not structural: https://github.com/kubernetes-sigs/controller-tools/issues/304
-   There is a PR for this: https://github.com/kubernetes-sigs/controller-tools/pull/312
+Note if you update K8s version APIs and don't update kubebuilder assets you will get test failures as tests run `kube-apiserver` and `etcd` from these assets which need to include the correct version of kubernetes.
 
 ### Prerequisites
 
@@ -85,7 +79,6 @@ You should delete the Operator running in the cluster at this point.
 # Build Helm Chart
 
 Use the Makefile in the `./helm` directory. Ensure you have `pyyaml` in your python environment.
-
 
 # Openshift
 

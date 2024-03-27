@@ -7,29 +7,14 @@ from e2e_utils.install import delete_seldon, install_seldon
 from e2e_utils.s2i import create_s2i_image, kind_load_image
 from seldon_e2e_utils import clean_string, get_seldon_version, retry_run
 
+ROOT_PATH = os.path.dirname(os.path.dirname(__file__))
+RESOURCES_PATH = os.path.join(ROOT_PATH, "resources")
+
 
 def _to_python_bool(val):
     # From Flask's docs:
     # https://flask.palletsprojects.com/en/1.1.x/config/#configuring-from-environment-variables
     return val.lower() in {"1", "t", "true"}
-
-
-SELDON_E2E_TESTS_POD_INFORMATION = _to_python_bool(
-    os.getenv("SELDON_E2E_TESTS_POD_INFORMATION", default="false")
-)
-
-
-@pytest.fixture(scope="session", autouse=SELDON_E2E_TESTS_POD_INFORMATION)
-def run_pod_information_in_background(request):
-    # This command runs the pod information and prints it in the background
-    # every time there's a new update
-    run(
-        (
-            "kubectl get pods --all-namespaces -w | "
-            + 'awk \'{print "\\nPODS UPDATE: "$0"\\n"}\' & '
-        ),
-        shell=True,
-    )
 
 
 @pytest.fixture(scope="module")
@@ -57,6 +42,41 @@ def namespace(request):
 
     # Tear down namespace
     run(f"kubectl delete namespace {namespace}", shell=True)
+
+
+def install_argo():
+    kwargs = {
+        "check": True,
+        "shell": True,
+    }
+
+    run("kubectl create namespace argo", **kwargs)
+    run(
+        "kubectl apply -n argo -f https://raw.githubusercontent.com/argoproj/argo-workflows/stable/manifests/install.yaml",
+        **kwargs,
+    )
+    run("kubectl rollout status -n argo deployment/argo-server", **kwargs)
+    run("kubectl rollout status -n argo deployment/workflow-controller", **kwargs)
+    run(
+        "kubectl create rolebinding argo-default-admin --clusterrole=admin --serviceaccount=argo:default -n argo",
+        **kwargs,
+    )
+    run(
+        "kubectl create rolebinding argo-seldon-workflow --clusterrole=seldon-manager-role-seldon-system --serviceaccount=argo:default -n argo",
+        **kwargs,
+    )
+    run("kubectl apply -n argo -f ../resources/argo-configmap.yaml", **kwargs)
+
+
+def delete_argo():
+    run("kubectl delete namespace argo", check=True, shell=True)
+
+
+@pytest.fixture()
+def argo_worfklows(scope="module"):
+    install_argo()
+    yield
+    delete_argo()
 
 
 @pytest.fixture

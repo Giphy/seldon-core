@@ -20,22 +20,27 @@ import (
 	"context"
 	"flag"
 	"os"
+	"time"
 
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/seldonio/seldon-core/operator/constants"
 	"github.com/seldonio/seldon-core/operator/utils"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	v2 "github.com/emissary-ingress/emissary/v3/pkg/api/getambassador.io/v2"
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	machinelearningv1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
 	machinelearningv1alpha2 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1alpha2"
 	machinelearningv1alpha3 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1alpha3"
 	"github.com/seldonio/seldon-core/operator/controllers"
 	k8sutils "github.com/seldonio/seldon-core/operator/utils/k8s"
+	"go.uber.org/automaxprocs/maxprocs"
 	"go.uber.org/zap"
 	istio "istio.io/client-go/pkg/apis/networking/v1alpha3"
 	appsv1 "k8s.io/api/apps/v1"
+	autoscaling "k8s.io/api/autoscaling/v2"
 	corev1 "k8s.io/api/core/v1"
+	crdv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	"k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1beta1"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -46,9 +51,11 @@ import (
 )
 
 const (
-	logLevelEnvVar  = "SELDON_LOG_LEVEL"
-	logLevelDefault = "INFO"
-	debugEnvVar     = "SELDON_DEBUG"
+	logLevelEnvVar          = "SELDON_LOG_LEVEL"
+	logLevelDefault         = "INFO"
+	debugEnvVar             = "SELDON_DEBUG"
+	leaderElectionIDEnvVar  = "LEADER_ELECTION_ID"
+	leaderElectionIDDefault = "a33bd623.machinelearning.seldon.io"
 )
 
 var (
@@ -63,15 +70,21 @@ func init() {
 
 	_ = appsv1.AddToScheme(scheme)
 	_ = corev1.AddToScheme(scheme)
+	_ = autoscaling.AddToScheme(scheme)
 	_ = machinelearningv1.AddToScheme(scheme)
 	_ = machinelearningv1alpha2.AddToScheme(scheme)
 	_ = machinelearningv1alpha3.AddToScheme(scheme)
 	_ = v1beta1.AddToScheme(scheme)
+	_ = crdv1.AddToScheme(scheme)
 	if utils.GetEnv(controllers.ENV_KEDA_ENABLED, "false") == "true" {
 		_ = kedav1alpha1.AddToScheme(scheme)
 	}
 	if utils.GetEnv(controllers.ENV_ISTIO_ENABLED, "false") == "true" {
 		_ = istio.AddToScheme(scheme)
+	}
+	if utils.GetEnv(controllers.ENV_AMBASSADOR_ENABLED, "false") == "true" &&
+		utils.GetEnv(controllers.ENV_AMBASSADOR_VERSION, "v1") == "v2" {
+		_ = v2.AddToScheme(scheme)
 	}
 	// +kubebuilder:scaffold:scheme
 }
@@ -111,10 +124,19 @@ func main() {
 	var createResources bool
 	var debug bool
 	var logLevel string
+	var leaderElectionID string
+	var leaderElectionResourceLock string
+	var leaderElectionLeaseDurationSecs int
+	var leaderElectionRenewDeadlineSecs int
+	var leaderElectionRetryPeriodSecs int
 
 	flag.StringVar(&metricsAddr, "metrics-addr", ":8080", "The address the metric endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "enable-leader-election", false,
 		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
+	flag.StringVar(&leaderElectionResourceLock, "leader-election-resource-lock", "", "Leader election resource lock")
+	flag.IntVar(&leaderElectionLeaseDurationSecs, "leader-election-lease-duration-secs", 0, "leadership election lease duration in secs")
+	flag.IntVar(&leaderElectionRenewDeadlineSecs, "leader-election-renew-deadline-secs", 0, "leadership election renew deadline in secs")
+	flag.IntVar(&leaderElectionRetryPeriodSecs, "leader-election-retry-period-secs", 0, "leadership election retry period in secs")
 	flag.IntVar(&webHookPort, "webhook-port", 443, "Webhook server port")
 	flag.StringVar(&namespace, "namespace", "", "The namespace to restrict the operator.")
 	flag.StringVar(&operatorNamespace, "operator-namespace", "default", "The namespace of the running operator")
@@ -125,6 +147,7 @@ func main() {
 		"Enable debug mode. Logs will be sampled and less structured.",
 	)
 	flag.StringVar(&logLevel, "log-level", utils.GetEnv(logLevelEnvVar, logLevelDefault), "Log level.")
+	flag.StringVar(&leaderElectionID, "leader-election-id", utils.GetEnv(leaderElectionIDEnvVar, leaderElectionIDDefault), "Leader Election ID determines the name of the resource that leader election will use for holding the leader lock.")
 	flag.Parse()
 
 	ctx := context.Background()
@@ -132,6 +155,13 @@ func main() {
 	setupLogger(logLevel, debug)
 
 	config := ctrl.GetConfigOrDie()
+
+	// Set runtime.GOMAXPROCS to respect container limits if the env var GOMAXPROCS is not set or is invalid, preventing CPU throttling.
+	undo, err := maxprocs.Set(maxprocs.Logger(setupLog.Info))
+	defer undo()
+	if err != nil {
+		setupLog.Error(err, "failed to set GOMAXPROCS")
+	}
 
 	//Override operator namespace from environment variable as the source of truth
 	operatorNamespace = utils.GetEnv("POD_NAMESPACE", operatorNamespace)
@@ -151,13 +181,41 @@ func main() {
 		}
 	}
 
+	// Assign leader election vars if provided
+	var leaderElectionLeaseDuration *time.Duration
+	var leaderElectionRenewDeadlineDuration *time.Duration
+	var leaderElectionRetryPeriodDuration *time.Duration
+	if leaderElectionLeaseDurationSecs > 0 {
+		duration := time.Second * time.Duration(leaderElectionLeaseDurationSecs)
+		leaderElectionLeaseDuration = &duration
+	}
+	if leaderElectionRenewDeadlineSecs > 0 {
+		duration := time.Second * time.Duration(leaderElectionRenewDeadlineSecs)
+		leaderElectionRenewDeadlineDuration = &duration
+	}
+	if leaderElectionRetryPeriodSecs > 0 {
+		duration := time.Second * time.Duration(leaderElectionRetryPeriodSecs)
+		leaderElectionRetryPeriodDuration = &duration
+	}
+
+	setupLog.Info("Leadership election",
+		"ID", leaderElectionID,
+		"resourceLock", leaderElectionResourceLock,
+		"leaseDuration", leaderElectionLeaseDurationSecs,
+		"renew deadline", leaderElectionRenewDeadlineSecs,
+		"retry period", leaderElectionRetryPeriodSecs)
+
 	mgr, err := ctrl.NewManager(config, ctrl.Options{
-		Scheme:             scheme,
-		MetricsBindAddress: metricsAddr,
-		LeaderElection:     enableLeaderElection,
-		LeaderElectionID:   "a33bd623.machinelearning.seldon.io",
-		Port:               webHookPort,
-		Namespace:          namespace,
+		Scheme:                     scheme,
+		MetricsBindAddress:         metricsAddr,
+		LeaderElection:             enableLeaderElection,
+		LeaderElectionID:           leaderElectionID,
+		LeaderElectionResourceLock: leaderElectionResourceLock,
+		LeaseDuration:              leaderElectionLeaseDuration,
+		RenewDeadline:              leaderElectionRenewDeadlineDuration,
+		RetryPeriod:                leaderElectionRetryPeriodDuration,
+		Port:                       webHookPort,
+		Namespace:                  namespace,
 	})
 	if err != nil {
 		setupLog.Error(err, "unable to start manager")

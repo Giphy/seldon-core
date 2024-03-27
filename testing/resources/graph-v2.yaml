@@ -1,0 +1,19 @@
+apiVersion: machinelearning.seldon.io/v1
+kind: SeldonDeployment
+metadata:
+  name: graph-test
+spec:
+  protocol: v2
+  predictors:
+    - name: default
+      graph:
+        name: mock-preprocessor
+        children:
+          - name: model
+            implementation: SKLEARN_SERVER 
+            modelUri: gs://seldon-models/sklearn/iris-0.23.2/lr_model
+      componentSpecs:
+        - spec:
+            containers:
+              - name: mock-preprocessor
+                image: seldonio/mock-preprocessor:0.2.0

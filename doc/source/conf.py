@@ -14,13 +14,14 @@
 #
 import os
 import sys
+import sphinx_material
 
 sys.path.insert(0, os.path.abspath("../.."))
 
 # -- Project information -----------------------------------------------------
 
 project = "seldon-core"
-copyright = "2019, Seldon Technologies Ltd"
+copyright = "2021, Seldon Technologies Ltd"
 author = "Seldon Technologies Ltd"
 
 # The short X.Y version
@@ -29,6 +30,7 @@ author = "Seldon Technologies Ltd"
 # version = seldon-core.__version__
 # The full version, including alpha/beta/rc tags
 # release = seldon-core.__version__
+
 
 # -- General configuration ---------------------------------------------------
 
@@ -60,7 +62,15 @@ extensions = [
     # Fix `ipython3` warning
     # https://github.com/spatialaudio/nbsphinx/issues/24
     "IPython.sphinxext.ipython_console_highlighting",
+    "sphinx_search.extension",
+    "sphinx_copybutton",
+    "sphinx_panels",
+    "sphinxcontrib.youtube",
 ]
+
+# Copybutton regex to pick up bash, jupyter, python etc.. (not needed if we standardise)
+# copybutton_prompt_text = r">>> |\.\.\. |\$ |In \[\d*\]: | {2,5}\.\.\.: | {5,8}: "
+# copybutton_prompt_is_regexp = True
 
 # Ignore py:class warnings about 3rd party deps or ignored packages (e.g.
 # generated proto)
@@ -85,6 +95,8 @@ m2r_anonymous_references = True
 # nbsphinx settings
 # nbsphinx_execute = 'auto'
 nbsphinx_execute = "never"
+# Disable require.js, as otherwise it conflicts with Swagger UI
+nbsphinx_requirejs_path = ""
 
 # apidoc settings
 apidoc_module_dir = "../../python/seldon_core"
@@ -104,9 +116,6 @@ napoleon_use_admonition_for_references = False
 napoleon_use_ivar = False
 napoleon_use_param = True
 napoleon_use_rtype = False
-
-# Add any paths that contain templates here, relative to this directory.
-templates_path = ["_templates"]
 
 # The suffix(es) of source filenames.
 # You can specify multiple suffix as a list of string:
@@ -159,6 +168,8 @@ linkcheck_ignore = [
     r"^(?!http).*\.png$",
     # Ignore Google Calendar links which seem to require auth
     "https://calendar.google.com",
+    # Ignore the following, which identify our request as a false DDoS
+    "https://danielfrg.com/blog/2018/10/model-management-polyaxon-argo-seldon/",
 ]
 # Ignore anchors, as they doesn't seem to work very well
 linkcheck_anchors_ignore = [".*"]
@@ -171,32 +182,96 @@ pygments_style = None
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "sphinx_rtd_theme"
+# Chosen Themes:
+# * https://github.com/bashtage/sphinx-material/
+# * https://github.com/myyasuda/sphinx_materialdesign_theme
+html_theme = "sphinx_material"
+
+if html_theme == "sphinx_material":
+    html_theme_options = {
+        "google_analytics_account": "UA-54780881-2",
+        "base_url": "https://docs.seldon.io/projects/seldon-core/",
+        "color_primary": "indigo",
+        "color_accent": "teal",
+        "repo_url": "https://github.com/SeldonIO/seldon-core/",
+        "repo_name": "Seldon Core",
+        "nav_title": "Seldon Core Documentation",
+        "globaltoc_depth": 3,
+        "globaltoc_collapse": True,
+        "globaltoc_includehidden": True,
+        "repo_type": "github",
+        # We're currently not providing any past versions info
+        # https://bashtage.github.io/sphinx-material/customization.html#version-dropdown
+        "version_dropdown": False,
+        "master_doc": False,
+        "nav_links": [
+            {
+                "href": "/",
+                "internal": False,
+                "title": "🚀 Our Other Projects & Products:",
+            },
+            {
+                "href": "https://docs.seldon.io/projects/alibi/en/stable/",
+                "internal": False,
+                "title": "Alibi Explain",
+            },
+            {
+                "href": "https://docs.seldon.io/projects/alibi-detect/en/stable/",
+                "internal": False,
+                "title": "Alibi Detect",
+            },
+            {
+                "href": "https://mlserver.readthedocs.io/en/latest/",
+                "internal": False,
+                "title": "MLServer",
+            },
+            {
+                "href": "https://tempo.readthedocs.io/en/latest/",
+                "internal": False,
+                "title": "Tempo SDK",
+            },
+            {
+                "href": "https://deploy.seldon.io",
+                "internal": False,
+                "title": "Seldon Deploy (Enterprise)",
+            },
+            {
+                "href": "https://github.com/SeldonIO/seldon-deploy-sdk#seldon-deploy-sdk",
+                "internal": False,
+                "title": "Seldon Deploy SDK (Enterprise)",
+            },
+        ],
+    }
+
+    extensions.append("sphinx_material")
+    html_theme_path = sphinx_material.html_theme_path()
+    html_context = sphinx_material.get_html_context()
+
+html_sidebars = {
+    "**": ["logo-text.html", "globaltoc.html", "localtoc.html", "searchbox.html"]
+}
 
 # The Seldon Logo located at the top of the navigation bar.
 html_logo = "Seldon_White.png"
 
+html_favicon = "favicon.ico"
+
 # Theme options are theme-specific and customize the look and feel of a theme
 # further.  For a list of options available for each theme, see the
 # documentation.
-#
-html_theme_options = {"sticky_navigation": False, "includehidden": False}
-
-# Add any paths that contain custom static files (such as style sheets) here,
-# relative to this directory. They are copied after the builtin static files,
-# so a file named "default.css" will overwrite the builtin "default.css".
 html_static_path = ["_static"]
 
-# override default theme width
-html_context = {
-    "css_files": ["_static/theme_overrides.css",],  # override wide tables in RTD theme
-}
+html_css_files = ["theme_overrides.css"]
 
 html_extra_path = ["_extra"]
 
 # Custom sidebar templates, must be a dictionary that maps document names
 # to template names.
 #
+
+# Add any paths that contain templates here, relative to this directory.
+templates_path = ["_templates"]
+
 # The default sidebars (for documents that don't match any pattern) are
 # defined by theme itself.  Builtin themes are using these templates by
 # default: ``['localtoc.html', 'relations.html', 'sourcelink.html',

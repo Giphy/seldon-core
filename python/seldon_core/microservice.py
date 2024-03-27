@@ -1,18 +1,24 @@
 import argparse
+import contextlib
 import importlib
 import json
 import logging
-import multiprocessing as mp
 import os
+import socket
 import sys
 import time
 from distutils.util import strtobool
 from functools import partial
-from typing import Callable, Dict
+from typing import Any, Callable, Dict, List, Tuple
 
-from seldon_core import __version__, persistence
+from seldon_core import __version__
 from seldon_core import wrapper as seldon_microservice
-from seldon_core.flask_utils import ANNOTATIONS_FILE, SeldonMicroserviceException
+from seldon_core.flask_utils import (
+    ANNOTATION_REST_TIMEOUT,
+    ANNOTATIONS_FILE,
+    DEFAULT_ANNOTATION_REST_TIMEOUT,
+    SeldonMicroserviceException,
+)
 from seldon_core.gunicorn_utils import (
     StandaloneApplication,
     UserModelApplication,
@@ -23,6 +29,16 @@ from seldon_core.gunicorn_utils import (
 )
 from seldon_core.metrics import SeldonMetrics
 from seldon_core.utils import getenv_as_bool, setup_tracing
+
+# This is related to how multiprocessing is implemeneted on MacOS
+# See https://github.com/SeldonIO/seldon-core/issues/3410 for discussion.
+USE_MULTIPROCESS_ENV_NAME = "USE_MULTIPROCESS_PACKAGE"
+USE_MULTIPROCESS = getenv_as_bool(USE_MULTIPROCESS_ENV_NAME, default=False)
+if USE_MULTIPROCESS:
+    import multiprocess as mp
+else:
+    import multiprocessing as mp
+
 
 logger = logging.getLogger(__name__)
 
@@ -55,12 +71,17 @@ def start_servers(
     target1
        Main flask process
     target2
-       Auxilary flask process
+       Auxiliary flask process
 
     """
+    if USE_MULTIPROCESS:
+        logger.info("Using alternative multiprocessing library")
+    else:
+        logger.info("Using standard multiprocessing library")
+
     p2 = None
     if target2:
-        p2 = mp.Process(target=target2, daemon=True)
+        p2 = mp.Process(target=target2, daemon=False)
         p2.start()
 
     p3 = None
@@ -134,7 +155,7 @@ def parse_parameters(parameters: Dict) -> Dict:
     return parsed_parameters
 
 
-def load_annotations() -> Dict:
+def load_annotations() -> Dict[str, str]:
     """
     Attempt to load annotations
 
@@ -195,15 +216,7 @@ def setup_logger(log_level: str, debug_mode: bool) -> logging.Logger:
     return logger
 
 
-def main():
-    LOG_FORMAT = (
-        "%(asctime)s - %(name)s:%(funcName)s:%(lineno)s - %(levelname)s:  %(message)s"
-    )
-    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
-    logger.info("Starting microservice.py:main")
-    logger.info(f"Seldon Core version: {__version__}")
-
-    sys.path.append(os.getcwd())
+def parse_args() -> Tuple[argparse.Namespace, List[str]]:
     parser = argparse.ArgumentParser()
     parser.add_argument("interface_name", type=str, help="Name of the user interface.")
 
@@ -213,7 +226,14 @@ def main():
         choices=["MODEL", "ROUTER", "TRANSFORMER", "COMBINER", "OUTLIER_DETECTOR"],
         default="MODEL",
     )
-    parser.add_argument("--persistence", nargs="?", default=0, const=1, type=int)
+    parser.add_argument(
+        "--persistence",
+        nargs="?",
+        default=0,
+        const=1,
+        type=int,
+        help="deprecated argument ",
+    )
     parser.add_argument(
         "--parameters", type=str, default=os.environ.get(PARAMETERS_ENV_NAME, "[]")
     )
@@ -251,7 +271,7 @@ def main():
     parser.add_argument(
         "--threads",
         type=int,
-        default=int(os.environ.get("GUNICORN_THREADS", "10")),
+        default=int(os.environ.get("GUNICORN_THREADS", "1")),
         help="Number of threads to run per Gunicorn worker.",
     )
     parser.add_argument(
@@ -265,6 +285,12 @@ def main():
         type=int,
         default=int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "0")),
         help="Maximum random jitter to add to max-requests.",
+    )
+    parser.add_argument(
+        "--keepalive",
+        type=int,
+        default=int(os.environ.get("GUNICORN_KEEPALIVE", "2")),
+        help="The number of seconds to wait for requests on a Keep-Alive connection.",
     )
 
     parser.add_argument(
@@ -310,7 +336,251 @@ def main():
         help="Enable gunicorn access log.",
     )
 
-    args, remaining = parser.parse_known_args()
+    parser.add_argument(
+        "--grpc-threads",
+        type=int,
+        default=os.environ.get("GRPC_THREADS", default="1"),
+        help="Number of GRPC threads per worker.",
+    )
+
+    parser.add_argument(
+        "--grpc-workers",
+        type=int,
+        default=os.environ.get("GRPC_WORKERS", default="1"),
+        help="Number of GPRC workers.",
+    )
+
+    return parser.parse_known_args()
+
+
+def _make_rest_server_debug(
+    user_object: Any,
+    seldon_metrics: SeldonMetrics,
+    args: argparse.Namespace,
+    jaeger_extra_tags: List[str],
+) -> Callable[[], None]:
+    """Makes a function that creates a REST debugging server.
+    Args:
+        user_object: an instance of user-defined class, inherited from user_model.SeldonComponent.
+        seldon_metrics: a SeldonMetrics instance.
+        args: parsed args from commandline.
+        jaeger_extra_tags:
+    """
+
+    def server():
+        app = seldon_microservice.get_rest_microservice(user_object, seldon_metrics)
+        try:
+            user_object.load()
+        except (NotImplementedError, AttributeError):
+            pass
+        if args.tracing:
+            logger.info("Tracing branch is active")
+            from flask_opentracing import FlaskTracing
+
+            tracer = setup_tracing(args.interface_name)
+
+            logger.info("Set JAEGER_EXTRA_TAGS %s", jaeger_extra_tags)
+            FlaskTracing(tracer, True, app, jaeger_extra_tags)
+
+        # Timeout not supported in flask development server
+        app.run(
+            host="0.0.0.0",
+            port=args.http_port,
+            threaded=False if args.single_threaded else True,
+        )
+
+    return server
+
+
+def _make_rest_server_prod(
+    user_object: Any,
+    seldon_metrics: SeldonMetrics,
+    args: argparse.Namespace,
+    jaeger_extra_tags: List[str],
+    annotations: Dict[str, str],
+) -> Callable[[], None]:
+    """Makes a function that creates a REST production server.
+    Args:
+        user_object: an instance of user-defined class, inherited from user_model.SeldonComponent.
+        seldon_metrics: a SeldonMetrics instance.
+        args: parsed args from commandline.
+        jaeger_extra_tags:
+        annotations:
+    """
+
+    def server() -> None:
+        rest_timeout = DEFAULT_ANNOTATION_REST_TIMEOUT
+        if ANNOTATION_REST_TIMEOUT in annotations:
+            # Gunicorn timeout is in seconds so convert as annotation is in miliseconds
+            rest_timeout = int(annotations[ANNOTATION_REST_TIMEOUT]) / 1000
+            # Converting timeout from float to int and set to 1 if is 0
+            rest_timeout = int(rest_timeout) or 1
+
+        options = {
+            "bind": "%s:%s" % ("0.0.0.0", args.http_port),
+            "accesslog": accesslog(args.access_log),
+            "loglevel": args.log_level.lower(),
+            "timeout": rest_timeout,
+            "threads": threads(args.threads, args.single_threaded),
+            "workers": args.workers,
+            "max_requests": args.max_requests,
+            "max_requests_jitter": args.max_requests_jitter,
+            "post_worker_init": post_worker_init,
+            "worker_exit": partial(worker_exit, seldon_metrics=seldon_metrics),
+            "keepalive": args.keepalive,
+        }
+        logger.info(f"Gunicorn Config:  {options}")
+
+        if args.pidfile is not None:
+            options["pidfile"] = args.pidfile
+        app = seldon_microservice.get_rest_microservice(user_object, seldon_metrics)
+
+        UserModelApplication(
+            app,
+            user_object,
+            args.tracing,
+            jaeger_extra_tags,
+            args.interface_name,
+            options=options,
+        ).run()
+
+    return server
+
+
+def _wait_forever(server):
+    try:
+        while True:
+            time.sleep(60 * 60)
+    except KeyboardInterrupt:
+        server.stop(None)
+
+
+def _run_grpc_server(
+    user_object: Any,
+    seldon_metrics: SeldonMetrics,
+    args: argparse.Namespace,
+    annotations: Dict[str, str],
+    bind_address: str,
+):
+    """Start a server in a subprocess."""
+    logger.info(f"Starting new GRPC server with {args.grpc_threads} threads.")
+
+    if args.tracing:
+        from grpc_opentracing import open_tracing_server_interceptor
+
+        logger.info("Adding tracer")
+        tracer = setup_tracing(args.interface_name)
+        interceptor = open_tracing_server_interceptor(tracer)
+    else:
+        interceptor = None
+
+    server = seldon_microservice.get_grpc_server(
+        user_object,
+        seldon_metrics,
+        annotations=annotations,
+        trace_interceptor=interceptor,
+        num_threads=args.grpc_threads,
+    )
+
+    try:
+        user_object.load()
+    except (NotImplementedError, AttributeError):
+        pass
+
+    server.add_insecure_port(bind_address)
+    server.start()
+    _wait_forever(server)
+
+
+def _make_grpc_server(
+    user_object: Any,
+    seldon_metrics: SeldonMetrics,
+    args: argparse.Namespace,
+    annotations: Dict[str, str],
+) -> Callable[[], None]:
+    def server() -> None:
+        with _reserve_grpc_port(args.grpc_port) as bind_port:
+            bind_address = "0.0.0.0:{}".format(bind_port)
+            logger.info(
+                "GRPC Server Binding to %s with %d processes.",
+                bind_address,
+                args.grpc_workers,
+            )
+            sys.stdout.flush()
+            workers = []
+            for _ in range(args.grpc_workers):
+                # NOTE: It is imperative that the worker subprocesses be forked before
+                # any gRPC servers start up. See
+                # https://github.com/grpc/grpc/issues/16001 for more details.
+                worker = mp.Process(
+                    target=_run_grpc_server,
+                    args=(
+                        user_object,
+                        seldon_metrics,
+                        args,
+                        annotations,
+                        bind_address,
+                    ),
+                )
+                worker.start()
+                workers.append(worker)
+            for worker in workers:
+                worker.join()
+
+    return server
+
+
+def _make_rest_metrics_server(
+    seldon_metrics: SeldonMetrics,
+    args: argparse.Namespace,
+) -> Callable[[], None]:
+    def server() -> None:
+        app = seldon_microservice.get_metrics_microservice(seldon_metrics)
+        if args.debug:
+            app.run(host="0.0.0.0", port=args.metrics_port)
+        else:
+            options = {
+                "bind": "%s:%s" % ("0.0.0.0", args.metrics_port),
+                "accesslog": accesslog(args.access_log),
+                "loglevel": args.log_level.lower(),
+                "timeout": 5000,
+                "max_requests": args.max_requests,
+                "max_requests_jitter": args.max_requests_jitter,
+                "post_worker_init": post_worker_init,
+                "keepalive": args.keepalive,
+            }
+            if args.pidfile is not None:
+                options["pidfile"] = args.pidfile
+            StandaloneApplication(app, options=options).run()
+
+    return server
+
+
+@contextlib.contextmanager
+def _reserve_grpc_port(grpc_port: int):
+    """Find and reserve a port for all subprocesses to use."""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+    if sock.getsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT) != 1:
+        raise RuntimeError("Failed to set SO_REUSEPORT.")
+    sock.bind(("", grpc_port))
+    try:
+        yield sock.getsockname()[1]
+    finally:
+        sock.close()
+
+
+def main():
+    LOG_FORMAT = (
+        "%(asctime)s - %(name)s:%(funcName)s:%(lineno)s - %(levelname)s:  %(message)s"
+    )
+    logging.basicConfig(level=logging.INFO, format=LOG_FORMAT)
+    logger.info("Starting microservice.py:main")
+    logger.info(f"Seldon Core version: {__version__}")
+
+    sys.path.append(os.getcwd())
+
+    args, remaining = parse_args()
 
     if len(remaining) > 0:
         logger.error(
@@ -345,18 +615,10 @@ def main():
         user_class = getattr(interface_file, parts[1])
 
     if args.persistence:
-        logger.info("Restoring persisted component")
-        user_object = persistence.restore(user_class, parameters)
-        persistence.persist(user_object, parameters.get("push_frequency"))
-    else:
-        user_object = user_class(**parameters)
+        logger.error(f"Persistence: ignored, persistence is deprecated")
+    user_object = user_class(**parameters)
 
     http_port = args.http_port
-    grpc_port = args.grpc_port
-    metrics_port = args.metrics_port
-
-    # if args.tracing:
-    #    tracer = setup_tracing(args.interface_name)
 
     seldon_metrics = SeldonMetrics(worker_id_func=os.getpid)
     # TODO why 2 ways to create metrics server
@@ -365,126 +627,48 @@ def main():
     # )
     if args.debug:
         # Start Flask debug server
-        def rest_prediction_server():
-            app = seldon_microservice.get_rest_microservice(user_object, seldon_metrics)
-            try:
-                user_object.load()
-            except (NotImplementedError, AttributeError):
-                pass
-            if args.tracing:
-                logger.info("Tracing branch is active")
-                from flask_opentracing import FlaskTracing
-
-                tracer = setup_tracing(args.interface_name)
-
-                logger.info("Set JAEGER_EXTRA_TAGS %s", jaeger_extra_tags)
-                FlaskTracing(tracer, True, app, jaeger_extra_tags)
-
-            app.run(
-                host="0.0.0.0",
-                port=http_port,
-                threaded=False if args.single_threaded else True,
-            )
-
         logger.info(
             "REST microservice running on port %i single-threaded=%s",
             http_port,
             args.single_threaded,
         )
-        server1_func = rest_prediction_server
+        server_rest_func = _make_rest_server_debug(
+            user_object, seldon_metrics, args, jaeger_extra_tags=jaeger_extra_tags
+        )
     else:
         # Start production server
-        def rest_prediction_server():
-            options = {
-                "bind": "%s:%s" % ("0.0.0.0", http_port),
-                "accesslog": accesslog(args.access_log),
-                "loglevel": args.log_level.lower(),
-                "timeout": 5000,
-                "threads": threads(args.threads, args.single_threaded),
-                "workers": args.workers,
-                "max_requests": args.max_requests,
-                "max_requests_jitter": args.max_requests_jitter,
-                "post_worker_init": post_worker_init,
-                "worker_exit": partial(worker_exit, seldon_metrics=seldon_metrics),
-            }
-            if args.pidfile is not None:
-                options["pidfile"] = args.pidfile
-            app = seldon_microservice.get_rest_microservice(user_object, seldon_metrics)
-
-            UserModelApplication(
-                app,
-                user_object,
-                jaeger_extra_tags,
-                args.interface_name,
-                options=options,
-            ).run()
-
         logger.info("REST gunicorn microservice running on port %i", http_port)
-        server1_func = rest_prediction_server
-
-    def grpc_prediction_server():
-
-        if args.tracing:
-            from grpc_opentracing import open_tracing_server_interceptor
-
-            logger.info("Adding tracer")
-            tracer = setup_tracing(args.interface_name)
-            interceptor = open_tracing_server_interceptor(tracer)
-        else:
-            interceptor = None
-
-        server = seldon_microservice.get_grpc_server(
+        server_rest_func = _make_rest_server_prod(
             user_object,
             seldon_metrics,
+            args,
+            jaeger_extra_tags=jaeger_extra_tags,
             annotations=annotations,
-            trace_interceptor=interceptor,
         )
 
-        try:
-            user_object.load()
-        except (NotImplementedError, AttributeError):
-            pass
+    server_grpc_func = None
+    if args.grpc_workers > 0:
+        server_grpc_func = _make_grpc_server(
+            user_object, seldon_metrics, args, annotations=annotations
+        )
 
-        server.add_insecure_port(f"0.0.0.0:{grpc_port}")
-
-        server.start()
-
-        logger.info("GRPC microservice Running on port %i", grpc_port)
-        while True:
-            time.sleep(1000)
-
-    server2_func = grpc_prediction_server
-
-    def rest_metrics_server():
-        app = seldon_microservice.get_metrics_microservice(seldon_metrics)
-        if args.debug:
-            app.run(host="0.0.0.0", port=metrics_port)
-        else:
-            options = {
-                "bind": "%s:%s" % ("0.0.0.0", metrics_port),
-                "accesslog": accesslog(args.access_log),
-                "loglevel": args.log_level.lower(),
-                "timeout": 5000,
-                "max_requests": args.max_requests,
-                "max_requests_jitter": args.max_requests_jitter,
-                "post_worker_init": post_worker_init,
-            }
-            if args.pidfile is not None:
-                options["pidfile"] = args.pidfile
-            StandaloneApplication(app, options=options).run()
-
-    logger.info("REST metrics microservice running on port %i", metrics_port)
-    metrics_server_func = rest_metrics_server
+    logger.info("REST metrics microservice running on port %i", args.metrics_port)
+    server_metrics_func = _make_rest_metrics_server(seldon_metrics, args)
 
     if hasattr(user_object, "custom_service") and callable(
         getattr(user_object, "custom_service")
     ):
-        server3_func = user_object.custom_service
+        server_custom_func = user_object.custom_service
     else:
-        server3_func = None
+        server_custom_func = None
 
     logger.info("Starting servers")
-    start_servers(server1_func, server2_func, server3_func, metrics_server_func)
+    start_servers(
+        server_rest_func,
+        server_grpc_func,
+        server_custom_func,
+        server_metrics_func,
+    )
 
 
 if __name__ == "__main__":

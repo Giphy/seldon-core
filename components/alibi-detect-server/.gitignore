@@ -3,3 +3,6 @@ adserver.egg-info
 .mypy_cache
 .pytest_cache
 .coverage
+_seldon_core
+version.txt
+artifacts

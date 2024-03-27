@@ -52,9 +52,11 @@ func MountSecretToDeploymentContainers(deploy *appsv1.Deployment, secretRefName 
 func GetPredictionPath(mlDep *machinelearningv1.SeldonDeployment) string {
 	protocol := mlDep.Spec.Protocol
 
-	if protocol == "tensorflow" {
+	if protocol == machinelearningv1.ProtocolTensorflow {
 		// This will be updated as part of https://github.com/SeldonIO/seldon-core/issues/1611
-		return "/v1/models/" + mlDep.Spec.Predictors[0].Graph.Name + "/:predict"
+		return "/v1/models/" + mlDep.Spec.Predictors[0].Graph.Name + ":predict"
+	} else if protocol == machinelearningv1.ProtocolKFServing || protocol == machinelearningv1.ProtocolV2 {
+		return "/v2/models/" + mlDep.Spec.Predictors[0].Graph.Name + "/infer"
 	} else {
 		return "/api/v1.0/predictions"
 	}
@@ -103,7 +105,7 @@ func HasEnvVar(envVars []v1.EnvVar, name string) bool {
 	return false
 }
 
-func SetEnvVar(envVars []v1.EnvVar, newVar v1.EnvVar) (newEnvVars []v1.EnvVar) {
+func SetEnvVar(envVars []v1.EnvVar, newVar v1.EnvVar, override bool) (newEnvVars []v1.EnvVar) {
 	found := false
 	index := 0
 	for i, envVar := range envVars {
@@ -112,11 +114,14 @@ func SetEnvVar(envVars []v1.EnvVar, newVar v1.EnvVar) (newEnvVars []v1.EnvVar) {
 			index = i
 		}
 	}
-	if found {
+
+	if found && override {
 		newEnvVars = append(envVars[:index])
 		newEnvVars = append(newEnvVars, newVar)
 		newEnvVars = append(newEnvVars, envVars[index+1:]...)
-	} else {
+	}
+
+	if !found {
 		newEnvVars = envVars
 		newEnvVars = append(newEnvVars, newVar)
 	}

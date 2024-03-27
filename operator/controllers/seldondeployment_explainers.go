@@ -23,6 +23,8 @@ import (
 	"strconv"
 	"strings"
 
+	utils2 "github.com/seldonio/seldon-core/operator/controllers/utils"
+
 	"k8s.io/client-go/kubernetes"
 
 	"encoding/json"
@@ -40,12 +42,14 @@ import (
 )
 
 const (
-	ExplainerConfigMapKeyName = "explainer"
-	EnvExplainerImageRelated  = "RELATED_IMAGE_EXPLAINER"
+	ExplainerConfigMapKeyName  = "explainer"
+	EnvRelatedImageExplainer   = "RELATED_IMAGE_EXPLAINER"
+	EnvRelatedImageExplainerV2 = "RELATED_IMAGE_EXPLAINER_V2"
 )
 
 var (
-	envExplainerImage = os.Getenv(EnvExplainerImageRelated)
+	envExplainerImage   = os.Getenv(EnvRelatedImageExplainer)
+	envExplainerImageV2 = os.Getenv(EnvRelatedImageExplainerV2)
 )
 
 type ExplainerInitialiser struct {
@@ -57,8 +61,19 @@ func NewExplainerInitializer(ctx context.Context, clientset kubernetes.Interface
 	return &ExplainerInitialiser{clientset: clientset, ctx: ctx}
 }
 
+func extractExplainerEnvSecretRefName(p *machinelearningv1.Explainer) string {
+	envSecretRefName := ""
+	if p.EnvSecretRefName == "" {
+		envSecretRefName = PredictiveUnitDefaultEnvSecretRefName
+	} else {
+		envSecretRefName = p.EnvSecretRefName
+	}
+	return envSecretRefName
+}
+
 type ExplainerConfig struct {
-	Image string `json:"image"`
+	Image    string `json:"image"`
+	Image_v2 string `json:"image_v2"`
 }
 
 func (ei *ExplainerInitialiser) getExplainerConfigs() (*ExplainerConfig, error) {
@@ -83,7 +98,7 @@ func getExplainerConfigsFromMap(configMap *corev1.ConfigMap) (*ExplainerConfig, 
 
 func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonDeployment, p *machinelearningv1.PredictorSpec, c *components, pSvcName string, podSecurityContect *corev1.PodSecurityContext, log logr.Logger) error {
 
-	if !isEmptyExplainer(p.Explainer) {
+	if !utils2.IsEmptyExplainer(p.Explainer) {
 
 		seldonId := machinelearningv1.GetSeldonDeploymentName(mlDep)
 
@@ -103,16 +118,36 @@ func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonD
 			p.Graph.Endpoint = &machinelearningv1.Endpoint{Type: machinelearningv1.REST}
 		}
 
+		explainerProtocol := string(machinelearningv1.ProtocolSeldon)
+		if mlDep.Spec.Protocol == machinelearningv1.ProtocolTensorflow {
+			explainerProtocol = string(machinelearningv1.ProtocolTensorflow)
+		}
+		if mlDep.Spec.Protocol == machinelearningv1.ProtocolKFServing || mlDep.Spec.Protocol == machinelearningv1.ProtocolV2 {
+			explainerProtocol = string(machinelearningv1.ProtocolV2)
+		}
+
 		// Image from configMap or Relalated Image if its not set
 		if explainerContainer.Image == "" {
-			if envExplainerImage != "" {
-				explainerContainer.Image = envExplainerImage
-			} else {
-				config, err := ei.getExplainerConfigs()
-				if err != nil {
-					return err
+			if explainerProtocol == string(machinelearningv1.ProtocolV2) {
+				if envExplainerImageV2 != "" {
+					explainerContainer.Image = envExplainerImageV2
+				} else {
+					config, err := ei.getExplainerConfigs()
+					if err != nil {
+						return err
+					}
+					explainerContainer.Image = config.Image_v2
 				}
-				explainerContainer.Image = config.Image
+			} else {
+				if envExplainerImage != "" {
+					explainerContainer.Image = envExplainerImage
+				} else {
+					config, err := ei.getExplainerConfigs()
+					if err != nil {
+						return err
+					}
+					explainerContainer.Image = config.Image
+				}
 			}
 		}
 
@@ -138,11 +173,6 @@ func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonD
 			pSvcEndpoint = c.serviceDetails[pSvcName].HttpEndpoint
 		}
 
-		explainerProtocol := string(machinelearningv1.ProtocolSeldon)
-		if mlDep.Spec.Protocol == machinelearningv1.ProtocolTensorflow {
-			explainerProtocol = string(machinelearningv1.ProtocolTensorflow)
-		}
-
 		if customPort == nil {
 			explainerContainer.Ports = append(explainerContainer.Ports, corev1.ContainerPort{Name: portType, ContainerPort: portNum, Protocol: corev1.ProtocolTCP})
 		} else {
@@ -151,75 +181,91 @@ func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonD
 		}
 
 		if explainerContainer.LivenessProbe == nil {
-			explainerContainer.LivenessProbe = &corev1.Probe{Handler: corev1.Handler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(portType)}}, InitialDelaySeconds: 60, PeriodSeconds: 5, SuccessThreshold: 1, FailureThreshold: 5, TimeoutSeconds: 1}
+			explainerContainer.LivenessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(portType)}}, InitialDelaySeconds: 60, PeriodSeconds: 5, SuccessThreshold: 1, FailureThreshold: 5, TimeoutSeconds: 1}
 		}
 		if explainerContainer.ReadinessProbe == nil {
-			explainerContainer.ReadinessProbe = &corev1.Probe{Handler: corev1.Handler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(portType)}}, InitialDelaySeconds: 20, PeriodSeconds: 5, SuccessThreshold: 1, FailureThreshold: 7, TimeoutSeconds: 1}
+			explainerContainer.ReadinessProbe = &corev1.Probe{ProbeHandler: corev1.ProbeHandler{TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromString(portType)}}, InitialDelaySeconds: 20, PeriodSeconds: 5, SuccessThreshold: 1, FailureThreshold: 7, TimeoutSeconds: 1}
 		}
 
 		// Add livecycle probe
 		if explainerContainer.Lifecycle == nil {
-			explainerContainer.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.Handler{Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", "/bin/sleep 10"}}}}
+			explainerContainer.Lifecycle = &corev1.Lifecycle{PreStop: &corev1.LifecycleHandler{Exec: &corev1.ExecAction{Command: []string{"/bin/sh", "-c", "/bin/sleep 10"}}}}
 		}
 
-		explainerContainer.Args = []string{
-			"--model_name=" + mlDep.Name,
-			"--predictor_host=" + pSvcEndpoint,
-			"--protocol=" + explainerProtocol + "." + explainerTransport,
-			"--http_port=" + strconv.Itoa(int(portNum)),
-		}
-
-		if p.Explainer.ModelUri != "" {
-			explainerContainer.Args = append(explainerContainer.Args, "--storage_uri="+DefaultModelLocalMountPath)
-		}
-
-		explainerContainer.Args = append(explainerContainer.Args, string(p.Explainer.Type))
-
-		if p.Explainer.Type == machinelearningv1.AlibiAnchorsImageExplainer {
-			explainerContainer.Args = append(explainerContainer.Args, "--tf_data_type=float32")
-		}
-
-		// Order explainer config map keys
-		var keys []string
-		for k, _ := range p.Explainer.Config {
-			keys = append(keys, k)
-		}
-		sort.Strings(keys)
-		for _, k := range keys {
-			v := p.Explainer.Config[k]
-			//remote files in model location should get downloaded by initializer
-			if p.Explainer.ModelUri != "" {
-				v = strings.Replace(v, p.Explainer.ModelUri, "/mnt/models", 1)
+		//TODO need to change python explainers to accept v2 as protocol name
+		if explainerProtocol == string(machinelearningv1.ProtocolV2) {
+			// add mlserver alibi runtime env vars
+			// alibi-specific json
+			explainEnvs, err := getAlibiExplainEnvVars(int(portNum), explainerContainer.Name, p.Explainer.Type, pSvcEndpoint, p.Graph.Name, p.Explainer.InitParameters)
+			if err != nil {
+				return err
 			}
-			arg := "--" + k + "=" + v
-			explainerContainer.Args = append(explainerContainer.Args, arg)
-		}
-		// see https://github.com/cliveseldon/kfserving/tree/explainer_update_jul/docs/samples/explanation/income for more
 
-		// Add Environment Variables - TODO: are these needed
-		if !utils.HasEnvVar(explainerContainer.Env, machinelearningv1.ENV_PREDICTIVE_UNIT_SERVICE_PORT) {
-			explainerContainer.Env = append(explainerContainer.Env, []corev1.EnvVar{
-				corev1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_SERVICE_PORT, Value: strconv.Itoa(int(portNum))},
-				corev1.EnvVar{Name: machinelearningv1.ENV_PREDICTIVE_UNIT_ID, Value: explainerContainer.Name},
-				corev1.EnvVar{Name: machinelearningv1.ENV_PREDICTOR_ID, Value: p.Name},
-				corev1.EnvVar{Name: machinelearningv1.ENV_SELDON_DEPLOYMENT_ID, Value: mlDep.ObjectMeta.Name},
-			}...)
+			explainerContainer.Env = explainEnvs
+		} else {
+			explainerContainer.Args = []string{
+				"--model_name=" + p.Graph.Name,
+				"--predictor_host=" + pSvcEndpoint,
+				"--protocol=" + explainerProtocol + "." + explainerTransport,
+				"--http_port=" + strconv.Itoa(int(portNum)),
+			}
+
+			if p.Explainer.ModelUri != "" {
+				explainerContainer.Args = append(explainerContainer.Args, "--storage_uri="+DefaultModelLocalMountPath)
+			}
+
+			explainerContainer.Args = append(explainerContainer.Args, string(p.Explainer.Type))
+
+			if p.Explainer.Type == machinelearningv1.AlibiAnchorsImageExplainer {
+				explainerContainer.Args = append(explainerContainer.Args, "--tf_data_type=float32")
+			}
+
+			// Order explainer config map keys
+			var keys []string
+			for k := range p.Explainer.Config {
+				keys = append(keys, k)
+			}
+			sort.Strings(keys)
+			for _, k := range keys {
+				v := p.Explainer.Config[k]
+				//remote files in model location should get downloaded by initializer
+				if p.Explainer.ModelUri != "" {
+					v = strings.Replace(v, p.Explainer.ModelUri, "/mnt/models", 1)
+				}
+				arg := "--" + k + "=" + v
+				explainerContainer.Args = append(explainerContainer.Args, arg)
+			}
 		}
 
 		seldonPodSpec := machinelearningv1.SeldonPodSpec{Spec: corev1.PodSpec{
 			Containers: []corev1.Container{explainerContainer},
 		}}
 
-		deploy := createDeploymentWithoutEngine(depName, seldonId, &seldonPodSpec, p, mlDep, podSecurityContect)
+		deploy := createDeploymentWithoutEngine(depName, seldonId, &seldonPodSpec, p, mlDep, podSecurityContect, false)
+
+		// Set replicas to zero if main predictor or graph has zero replicas otherwise set to explainer replicas
+		if p.Replicas != nil && *p.Replicas == 0 {
+			deploy.Spec.Replicas = p.Replicas
+		} else if p.Replicas == nil && mlDep.Spec.Replicas != nil && *mlDep.Spec.Replicas == 0 {
+			deploy.Spec.Replicas = mlDep.Spec.Replicas
+		} else {
+			deploy.Spec.Replicas = p.Explainer.Replicas
+		}
 
 		if p.Explainer.ModelUri != "" {
 			var err error
 
+			envSecretRefName := extractExplainerEnvSecretRefName(p.Explainer)
+
 			mi := NewModelInitializer(ei.ctx, ei.clientset)
-			deploy, err = mi.InjectModelInitializer(deploy, explainerContainer.Name, p.Explainer.ModelUri, p.Explainer.ServiceAccountName, p.Explainer.EnvSecretRefName, p.Explainer.StorageInitializerImage)
+			deploy, err = mi.InjectModelInitializer(deploy, explainerContainer.Name, p.Explainer.ModelUri, p.Explainer.ServiceAccountName, envSecretRefName, p.Explainer.StorageInitializerImage)
 			if err != nil {
 				return err
 			}
+		}
+
+		if p.Explainer.ServiceAccountName != "" {
+			deploy.Spec.Template.Spec.ServiceAccountName = p.Explainer.ServiceAccountName
 		}
 
 		// for explainer use same service name as its Deployment
@@ -232,10 +278,15 @@ func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonD
 		c.deployments = append(c.deployments, deploy)
 
 		// Use seldondeployment name dash explainer as the external service name. This should allow canarying.
-		eSvc, err := createPredictorService(eSvcName, seldonId, p, mlDep, httpPort, grpcPort, true, log)
+		eSvc, err := createPredictorService(eSvcName, seldonId, p, mlDep, httpPort, grpcPort, true, log, c)
 		if err != nil {
 			return err
 		}
+
+		// Overwrite main Seldon App label onto SVC
+		pSvcName := machinelearningv1.GetPredictorKey(mlDep, p)
+		eSvc.Labels[machinelearningv1.Label_seldon_app] = pSvcName
+
 		eSvc = addLabelsToService(eSvc, nil, p)
 		c.services = append(c.services, eSvc)
 		c.serviceDetails[eSvcName] = &machinelearningv1.ServiceStatus{
@@ -247,7 +298,7 @@ func (ei *ExplainerInitialiser) createExplainer(mlDep *machinelearningv1.SeldonD
 			c.serviceDetails[eSvcName].GrpcEndpoint = eSvcName + "." + eSvc.Namespace + ":" + strconv.Itoa(grpcPort)
 		}
 		if utils.GetEnv(ENV_ISTIO_ENABLED, "false") == "true" {
-			vsvcs, dstRule := createExplainerIstioResources(eSvcName, p, mlDep, seldonId, getNamespace(mlDep), httpPort, grpcPort)
+			vsvcs, dstRule := createExplainerIstioResources(eSvcName, p, mlDep, seldonId, utils2.GetNamespace(mlDep), httpPort, grpcPort)
 			c.virtualServices = append(c.virtualServices, vsvcs...)
 			c.destinationRules = append(c.destinationRules, dstRule...)
 		}
@@ -284,8 +335,8 @@ func createExplainerIstioResources(pSvcName string, p *machinelearningv1.Predict
 			Namespace: namespace,
 		},
 		Spec: istio_networking.VirtualService{
-			Hosts:    []string{"*"},
-			Gateways: []string{getAnnotation(mlDep, ANNOTATION_ISTIO_GATEWAY, istio_gateway)},
+			Hosts:    []string{utils2.GetAnnotation(mlDep, ANNOTATION_ISTIO_HOST, "*")},
+			Gateways: []string{utils2.GetAnnotation(mlDep, ANNOTATION_ISTIO_GATEWAY, istio_gateway)},
 			Http: []*istio_networking.HTTPRoute{
 				{
 					Match: []*istio_networking.HTTPMatchRequest{
@@ -305,16 +356,16 @@ func createExplainerIstioResources(pSvcName string, p *machinelearningv1.Predict
 			Namespace: namespace,
 		},
 		Spec: istio_networking.VirtualService{
-			Hosts:    []string{"*"},
-			Gateways: []string{getAnnotation(mlDep, ANNOTATION_ISTIO_GATEWAY, istio_gateway)},
+			Hosts:    []string{utils2.GetAnnotation(mlDep, ANNOTATION_ISTIO_HOST, "*")},
+			Gateways: []string{utils2.GetAnnotation(mlDep, ANNOTATION_ISTIO_GATEWAY, istio_gateway)},
 			Http: []*istio_networking.HTTPRoute{
 				{
 					Match: []*istio_networking.HTTPMatchRequest{
 						{
 							Uri: &istio_networking.StringMatch{MatchType: &istio_networking.StringMatch_Prefix{Prefix: "/seldon.protos.Seldon/"}},
 							Headers: map[string]*istio_networking.StringMatch{
-								"seldon":    &istio_networking.StringMatch{MatchType: &istio_networking.StringMatch_Exact{Exact: mlDep.GetName()}},
-								"namespace": &istio_networking.StringMatch{MatchType: &istio_networking.StringMatch_Exact{Exact: namespace}},
+								"seldon":    {MatchType: &istio_networking.StringMatch_Exact{Exact: mlDep.GetName()}},
+								"namespace": {MatchType: &istio_networking.StringMatch_Exact{Exact: namespace}},
 							},
 						},
 					},

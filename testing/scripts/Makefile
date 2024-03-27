@@ -11,11 +11,6 @@ kind_create_cluster:
 kind_delete_cluster:
 	kind delete cluster
 
-.PHONY: kind_build_engine
-kind_build_engine:
-	cd ../../engine/ && make build_image
-	kind load docker-image seldonio/engine:$(VERSION) --loglevel trace
-
 .PHONY: kind_build_operator
 kind_build_operator:
 	cd ../../operator && make kind-image-install
@@ -27,8 +22,10 @@ kind_build_executor:
 .PHONY: kind_build_test_models
 kind_build_test_models:
 	make -C ../../examples/models/mean_classifier kind_load
+	make -C ../../examples/models/testing run_kind_load_all
 	make -C ../docker/fixed-model kind_load_images
 	make -C ../docker/echo-model kind_load_image
+	make -C ../docker/mock-preprocessor kind_load_image
 
 .PHONY: kind_build_prepackaged
 kind_build_prepackaged:
@@ -45,47 +42,53 @@ kind_build_alibi_explain:
 kind_build_alibi_detect:
 	cd ../../components/alibi-detect-server && make kind_load
 
+.PHONY: kind_build_rclone_storage_initializer
+kind_build_rclone_storage_initializer:
+	cd ../../components/rclone-storage-initializer && make kind-load
+
 .PHONY: kind_build_misc
 kind_build_misc:
-	cd ../../components/seldon-request-logger && make kind_load
-	cd ../../components/storage-initializer && make kind_load
 	cd ../../components/routers/epsilon-greedy && make kind_load
 
 .PHONY: kind_build_images
-kind_build_images: build_protos kind_build_engine kind_build_operator kind_build_executor kind_build_test_models kind_build_prepackaged kind_build_alibi_explain kind_build_alibi_detect kind_build_misc
+kind_build_images: build_protos kind_build_operator kind_build_executor kind_build_test_models kind_build_prepackaged kind_build_alibi_explain kind_build_alibi_detect kind_build_rclone_storage_initializer kind_build_misc
 
 .PHONY: helm_setup
 helm_setup:
 	helm repo add seldonio https://storage.googleapis.com/seldon-charts
-	helm repo add jaegertracing https://jaegertracing.github.io/helm-charts
-	helm repo add datawire https://www.getambassador.io
+	helm repo add datawire https://app.getambassador.io
+	helm repo add jetstack https://charts.jetstack.io
+	helm repo add metrics-server https://kubernetes-sigs.github.io/metrics-server/
 	helm repo update
 
 .PHONY: install_ambassador
 install_ambassador:
-	helm upgrade ambassador \
-		datawire/ambassador \
-		-f ../resources/ambassador_values.yaml \
-		--set image.repository=quay.io/datawire/ambassador \
-		--set crds.keep=false \
-		--set enableAES=false \
-		--namespace seldon \
-		--set replicaCount=1 \
-		--wait --install
+	kubectl apply -f https://app.getambassador.io/yaml/edge-stack/3.1.0/aes-crds.yaml
+	kubectl wait --timeout=90s --for=condition=available deployment emissary-apiext -n emissary-system
+	helm install -n ambassador --create-namespace edge-stack datawire/edge-stack \
+		-f ../resources/ambassador_values.yaml --wait
+	kubectl rollout status  -n ambassador deployment/edge-stack -w
+	kubectl apply -f ../resources/ambassador_nontls_setup.yaml -n ambassador
 
 .PHONY: install_jaeger
 install_jaeger:
-	helm upgrade jaeger-operator \
-		jaegertracing/jaeger-operator \
-		--set rbac.clusterRole=true \
-		--namespace seldon \
-		--wait --install
-	kubectl apply -f ../resources/jaeger.yaml --namespace seldon
+	kubectl create namespace observability || echo "namespace observability exists"
+	kubectl create -f https://github.com/jaegertracing/jaeger-operator/releases/download/v1.38.0/jaeger-operator.yaml -n observability
+	kubectl wait  --timeout=90s --for condition=Available -n observability deployment/jaeger-operator
+	sleep 20 # hack as Available condition does not seem to be enough for operator to be ready
+	kubectl create namespace seldon-system || echo "namespace seldon-system exists"
+	kubectl apply -f ../resources/jaeger.yaml
 
 
-#install_cert_manager:
-#	cd ../../operator && make install-cert-manager
-#	sleep 5 #https://github.com/jetstack/cert-manager/issues/2273
+install_cert_manager:
+	helm install \
+	    cert-manager jetstack/cert-manager \
+	    --namespace cert-manager \
+	    --create-namespace \
+	    --version v1.10.0 \
+	    --wait \
+	    --set installCRDs=true
+	sleep 5 #https://github.com/jetstack/cert-manager/issues/2273
 
 .PHONY: install_seldon
 install_seldon:
@@ -95,6 +98,7 @@ install_seldon:
 		../../helm-charts/seldon-core-operator \
 		--namespace seldon-system \
 		--set istio.enabled=true \
+		--set ambassador.enabled=true \
 		--set keda.enabled=true \
 		--set istio.gateway=istio-system/seldon-gateway \
 		--set certManager.enabled=false \
@@ -103,8 +107,8 @@ install_seldon:
 # Install istio and patch nodePort to allow 8004 to point to ingress gateway
 .PHONY: install_istio
 install_istio:
-	curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.6.8 TARGET_ARCH=x86_64 sh -
-	istio-1.6.8/bin/istioctl install --set profile=demo
+	curl -L https://istio.io/downloadIstio | ISTIO_VERSION=1.16.2 TARGET_ARCH=x86_64 sh -
+	istio-1.16.2/bin/istioctl install -y --set profile=demo
 	kubectl patch svc istio-ingressgateway -n istio-system --patch "$$(cat ../resources/istio-ingressgateway-patch.yaml)"
 	kubectl create -f ../resources/seldon-gateway.yaml -n istio-system
 
@@ -124,17 +128,17 @@ set_namespace:
 .PHONY: install_metrics
 # Derived from https://github.com/kubernetes-sigs/kind/issues/398#issuecomment-478325705
 install_metrics:
-	kubectl apply -f metrics.yaml
+	helm upgrade --install --set args={--kubelet-insecure-tls} metrics-server metrics-server/metrics-server --namespace kube-system --wait
 
 .PHONY: kind_setup
-kind_setup: create_namespaces helm_setup install_ambassador install_istio install_keda install_jaeger install_seldon set_namespace install_metrics
+kind_setup: create_namespaces helm_setup install_cert_manager install_ambassador install_istio install_keda install_jaeger install_seldon set_namespace install_metrics
 
 port-forward-ambassador:
-	kubectl port-forward $$(kubectl get pods -n seldon -l app.kubernetes.io/name=ambassador -o jsonpath='{.items[0].metadata.name}') -n seldon 8003:8080
+	kubectl port-forward $$(kubectl get pods -n ambassador -l app.kubernetes.io/instance=edge-stack  -o jsonpath='{.items[0].metadata.name}') -n ambassador 8005:8080
 
 .PHONY: s2i_build_base_images
 s2i_build_base_images:
-	cd ../../wrappers/s2i/python/build_scripts && ./build_all_local.sh
+	cd ../../wrappers/s2i/python/build_scripts && ./build_all.sh
 
 .PHONY: build_protos
 build_protos:
@@ -159,9 +163,9 @@ test_parallel: build_protos install
 		-s \
 		-W ignore \
 		-n $(PYTEST_WORKERS) \
-		-m "not sequential and not notebooks" 2>&1
+		-m "not sequential and not notebooks and not benchmark" 2>&1
 
-# Then run the s2i tests in sequence (as they currently fail in parallel
+# Then run the s2i tests in sequence (as they currently fail in parallel)
 test_sequential: build_protos install
 	pytest \
 		--verbose \
@@ -176,6 +180,13 @@ test_notebooks: build_protos install
 		-s \
 		-m "notebooks" \
 		-W ignore test_notebooks.py::TestNotebooks 2>&1
+
+test_benchmark: build_protos install
+	pytest \
+		--verbose \
+		-s \
+		-W ignore \
+		-m "benchmark" 2>&1
 
 .PHONY: clean
 clean:

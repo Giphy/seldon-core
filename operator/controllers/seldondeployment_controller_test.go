@@ -18,28 +18,34 @@ package controllers
 
 import (
 	"context"
+	"strconv"
 	"testing"
 	"time"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	machinelearningv1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
 	"github.com/seldonio/seldon-core/operator/constants"
+	testutils "github.com/seldonio/seldon-core/operator/controllers/testing"
 	appsv1 "k8s.io/api/apps/v1"
 	autoscaling "k8s.io/api/autoscaling/v2beta1"
-	autoscalingv2beta2 "k8s.io/api/autoscaling/v2beta1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/apimachinery/pkg/util/rand"
+	duckv1beta1 "knative.dev/pkg/apis/duck/v1beta1"
+)
+
+const (
+	TestTimout = time.Second * 60
 )
 
 var _ = Describe("Create a Seldon Deployment", func() {
-	const timeout = time.Second * 30
 	const interval = time.Second * 1
 	namespaceName := rand.String(10)
+	replicas := int32(1)
 	By("Creating a resource")
 	It("should create a resource with defaults", func() {
 		Expect(k8sClient).NotTo(BeNil())
@@ -74,6 +80,7 @@ var _ = Describe("Create a Seldon Deployment", func() {
 							Name: "classifier",
 							Type: &modelType,
 						},
+						Replicas: &replicas,
 					},
 				},
 			},
@@ -97,7 +104,7 @@ var _ = Describe("Create a Seldon Deployment", func() {
 		Eventually(func() error {
 			err := k8sClient.Get(context.Background(), key, fetched)
 			return err
-		}, timeout, interval).Should(BeNil())
+		}, TestTimout, interval).Should(BeNil())
 		Expect(fetched.Name).Should(Equal("dep"))
 
 		// Check deployment created
@@ -109,9 +116,88 @@ var _ = Describe("Create a Seldon Deployment", func() {
 		Eventually(func() error {
 			err := k8sClient.Get(context.Background(), depKey, depFetched)
 			return err
-		}, timeout, interval).Should(BeNil())
+		}, TestTimout, interval).Should(BeNil())
 		Expect(len(depFetched.Spec.Template.Spec.Containers)).Should(Equal(2))
 		Expect(*depFetched.Spec.Replicas).To(Equal(int32(1)))
+
+		// Check port envs have been added
+		containers := depFetched.Spec.Template.Spec.Containers
+		httpPort := strconv.Itoa(int(constants.FirstHttpPortNumber))
+		grpcPort := strconv.Itoa(int(constants.FirstGrpcPortNumber))
+		Expect(containers[0].Env).To(ContainElements(
+			v1.EnvVar{
+				Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_HTTP_SERVICE_PORT,
+				Value: httpPort,
+			},
+			v1.EnvVar{
+				Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_GRPC_SERVICE_PORT,
+				Value: grpcPort,
+			},
+			v1.EnvVar{
+				Name:  MLServerHTTPPortEnv,
+				Value: httpPort,
+			},
+			v1.EnvVar{
+				Name:  MLServerGRPCPortEnv,
+				Value: grpcPort,
+			},
+		))
+
+		// Check metrics env vars are there
+		fullMetricsPort := getPort(constants.DefaultMetricsPortName, containers[0].Ports)
+		metricsPort := strconv.Itoa(int(fullMetricsPort.ContainerPort))
+		metricsPath := getPrometheusPath(instance)
+		Expect(containers[0].Env).To(ContainElements(
+			v1.EnvVar{
+				Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_SERVICE_PORT_METRICS,
+				Value: metricsPort,
+			},
+			v1.EnvVar{
+				Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_METRICS_ENDPOINT,
+				Value: metricsPath,
+			},
+			v1.EnvVar{
+				Name:  MLServerMetricsPortEnv,
+				Value: metricsPort,
+			},
+			v1.EnvVar{
+				Name:  MLServerMetricsEndpointEnv,
+				Value: metricsPath,
+			},
+		))
+
+		// Check model's name is in there
+		Expect(containers[0].Env).To(ContainElements(
+			v1.EnvVar{
+				Name:  machinelearningv1.ENV_PREDICTIVE_UNIT_ID,
+				Value: containers[0].Name,
+			},
+			v1.EnvVar{
+				Name:  MLServerModelNameEnv,
+				Value: containers[0].Name,
+			},
+		))
+
+		// Check model URI is NOT in env vars
+		Expect(containers[0].Env).ToNot(ContainElement(
+			v1.EnvVar{
+				Name:  MLServerModelURIEnv,
+				Value: DefaultModelLocalMountPath,
+			},
+		))
+
+		//Update Deployment as pods not created with test client.
+		depUpdated := depFetched.DeepCopy()
+		depUpdated.Status.AvailableReplicas = replicas
+		depUpdated.Status.ReadyReplicas = replicas
+		depUpdated.Status.Replicas = replicas
+		depUpdated.Status.Conditions = []appsv1.DeploymentCondition{
+			{
+				Type:   appsv1.DeploymentAvailable,
+				Status: v1.ConditionTrue,
+			},
+		}
+		Expect(k8sClient.Status().Update(context.Background(), depUpdated)).Should(Succeed())
 
 		//Check svc created
 		svcKey := types.NamespacedName{
@@ -122,7 +208,7 @@ var _ = Describe("Create a Seldon Deployment", func() {
 		Eventually(func() error {
 			err := k8sClient.Get(context.Background(), svcKey, svcFetched)
 			return err
-		}, timeout, interval).Should(BeNil())
+		}, TestTimout, interval).Should(BeNil())
 
 		// Check events created
 		serviceCreatedEvents := 0
@@ -140,10 +226,156 @@ var _ = Describe("Create a Seldon Deployment", func() {
 		Expect(serviceCreatedEvents).To(Equal(2))
 		Expect(deploymentsCreatedEvents).To(Equal(1))
 
+		// Wait for sdep to update status
+		Eventually(func() int32 {
+			err := k8sClient.Get(context.Background(), key, fetched)
+			if err != nil {
+				return 0
+			}
+			return fetched.Status.Replicas
+		}, TestTimout, interval).Should(Equal(replicas))
+		Expect(fetched.Name).Should(Equal("dep"))
+
+		conditions := duckv1beta1.Conditions{
+			{
+				Type:   machinelearningv1.AmbassadorMappingsReady,
+				Status: "True",
+				Reason: machinelearningv1.AmbassadorMappingNotDefined,
+			},
+			{
+				Type:   machinelearningv1.DeploymentsReady,
+				Status: "True",
+				Reason: "",
+			},
+			{
+				Type:   machinelearningv1.HpasReady,
+				Status: "True",
+				Reason: machinelearningv1.HpaNotDefinedReason,
+			},
+			{
+				Type:   machinelearningv1.KedaReady,
+				Status: "True",
+				Reason: machinelearningv1.KedaNotDefinedReason,
+			},
+			{
+				Type:   machinelearningv1.PdbsReady,
+				Status: "True",
+				Reason: machinelearningv1.PdbNotDefinedReason,
+			},
+			{
+				Type:   "Ready",
+				Status: "True",
+				Reason: "",
+			},
+			{
+				Type:   machinelearningv1.ServicesReady,
+				Status: "True",
+				Reason: machinelearningv1.SvcReadyReason,
+			},
+			{
+				Type:   machinelearningv1.VirtualServicesReady,
+				Status: "True",
+				Reason: machinelearningv1.VirtualServiceReady,
+			},
+		}
+
+		Expect(fetched.Status.Conditions).Should(testutils.BeSematicEqual(conditions))
+
 		Expect(k8sClient.Delete(context.Background(), instance)).Should(Succeed())
 
 	})
+})
 
+var _ = Describe("Create a Seldon Deployment with a model URI", func() {
+	const interval = time.Second * 1
+	namespaceName := rand.String(10)
+	replicas := int32(1)
+	By("Creating a resource")
+	It("should create a resource with defaults", func() {
+		Expect(k8sClient).NotTo(BeNil())
+		var modelType = machinelearningv1.MODEL
+		key := types.NamespacedName{
+			Name:      "dep",
+			Namespace: namespaceName,
+		}
+		instance := &machinelearningv1.SeldonDeployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      key.Name,
+				Namespace: key.Namespace,
+			},
+			Spec: machinelearningv1.SeldonDeploymentSpec{
+				Name: "mydep",
+				Predictors: []machinelearningv1.PredictorSpec{
+					{
+						Name: "p1",
+						ComponentSpecs: []*machinelearningv1.SeldonPodSpec{
+							{
+								Spec: v1.PodSpec{
+									Containers: []v1.Container{
+										{
+											Image: "seldonio/mock_classifier:1.0",
+											Name:  "classifier",
+										},
+									},
+								},
+							},
+						},
+						Graph: machinelearningv1.PredictiveUnit{
+							Name:     "classifier",
+							Type:     &modelType,
+							ModelURI: "s3://foo/my-model",
+						},
+						Replicas: &replicas,
+					},
+				},
+			},
+		}
+
+		//Create namespace
+		namespace := &v1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: namespaceName,
+			},
+		}
+		Expect(k8sClient.Create(context.Background(), namespace)).Should(Succeed())
+
+		// Run Defaulter
+		instance.Default()
+
+		Expect(k8sClient.Create(context.Background(), instance)).Should(Succeed())
+		//time.Sleep(time.Second * 5)
+
+		fetched := &machinelearningv1.SeldonDeployment{}
+		Eventually(func() error {
+			err := k8sClient.Get(context.Background(), key, fetched)
+			return err
+		}, TestTimout, interval).Should(BeNil())
+		Expect(fetched.Name).Should(Equal("dep"))
+
+		// Check deployment created
+		depKey := types.NamespacedName{
+			Name:      machinelearningv1.GetDeploymentName(instance, instance.Spec.Predictors[0], instance.Spec.Predictors[0].ComponentSpecs[0], 0),
+			Namespace: namespaceName,
+		}
+		depFetched := &appsv1.Deployment{}
+		Eventually(func() error {
+			err := k8sClient.Get(context.Background(), depKey, depFetched)
+			return err
+		}, TestTimout, interval).Should(BeNil())
+		Expect(len(depFetched.Spec.Template.Spec.Containers)).Should(Equal(2))
+
+		// Check port envs have been added
+		containers := depFetched.Spec.Template.Spec.Containers
+		// Check model URI is NOT in env vars
+		Expect(containers[0].Env).To(ContainElement(
+			v1.EnvVar{
+				Name:  MLServerModelURIEnv,
+				Value: DefaultModelLocalMountPath,
+			},
+		))
+
+		Expect(k8sClient.Delete(context.Background(), instance)).Should(Succeed())
+	})
 })
 
 var _ = Describe("Create a Seldon Deployment", func() {
@@ -431,10 +663,10 @@ var _ = Describe("Create a Seldon Deployment with hpa", func() {
 								HpaSpec: &machinelearningv1.SeldonHpaSpec{
 									MinReplicas: nil,
 									MaxReplicas: 10,
-									Metrics: []autoscalingv2beta2.MetricSpec{
+									Metrics: []autoscaling.MetricSpec{
 										{
-											Type: autoscalingv2beta2.ResourceMetricSourceType,
-											Resource: &autoscalingv2beta2.ResourceMetricSource{
+											Type: autoscaling.ResourceMetricSourceType,
+											Resource: &autoscaling.ResourceMetricSource{
 												Name:                     v1.ResourceCPU,
 												TargetAverageUtilization: &utilization,
 											},
@@ -996,7 +1228,7 @@ func TestCreateDeploymentWithLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	dep := createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, nil)
+	dep := createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, nil, true)
 	g.Expect(dep.Labels[labelKey1]).To(Equal(labelValue1))
 	g.Expect(dep.Labels[labelKey2]).To(Equal(labelValue2))
 	g.Expect(dep.Spec.Template.ObjectMeta.Labels[labelKey1]).To(Equal(labelValue1))
@@ -1041,7 +1273,7 @@ func TestCreateDeploymentWithNoLabelsAndAnnotations(t *testing.T) {
 		},
 	}
 
-	_ = createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, nil)
+	_ = createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, nil, true)
 }
 
 var _ = Describe("Create a Seldon Deployment with KEDA", func() {
@@ -1181,3 +1413,64 @@ var _ = Describe("Create a Seldon Deployment with KEDA", func() {
 
 	})
 })
+
+func TestCreateDeploymentWithPodSecurityContext(t *testing.T) {
+	g := NewGomegaWithT(t)
+	depName := "dep"
+	modelType := machinelearningv1.MODEL
+	user1 := int64(5555)
+	user2 := int64(5556)
+	instance := &machinelearningv1.SeldonDeployment{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      depName,
+			Namespace: "default",
+		},
+		Spec: machinelearningv1.SeldonDeploymentSpec{
+			Name: "mydep",
+			Predictors: []machinelearningv1.PredictorSpec{
+				{
+					Name: "p1",
+					ComponentSpecs: []*machinelearningv1.SeldonPodSpec{
+						{
+							Metadata: machinelearningv1.ObjectMeta{},
+							Spec: v1.PodSpec{
+								Containers: []v1.Container{
+									{
+										Image: "seldonio/mock_classifier:1.0",
+										Name:  "classifier",
+									},
+								},
+							},
+						},
+					},
+					Graph: machinelearningv1.PredictiveUnit{
+						Name: "classifier",
+						Type: &modelType,
+					},
+				},
+			},
+		},
+	}
+
+	// Set security contect in sdep
+	instance.Spec.Predictors[0].ComponentSpecs[0].Spec.SecurityContext = &v1.PodSecurityContext{
+		RunAsUser: &user1,
+	}
+	dep := createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, nil, true)
+	g.Expect(*dep.Spec.Template.Spec.SecurityContext.RunAsUser).To(Equal(user1))
+
+	// Pass in security context
+	instance.Spec.Predictors[0].ComponentSpecs[0].Spec.SecurityContext = nil
+	securityContext := &v1.PodSecurityContext{
+		RunAsUser: &user2,
+	}
+	dep = createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, securityContext, true)
+	g.Expect(*dep.Spec.Template.Spec.SecurityContext.RunAsUser).To(Equal(user2))
+
+	// Pass in security context and in spec
+	instance.Spec.Predictors[0].ComponentSpecs[0].Spec.SecurityContext = &v1.PodSecurityContext{
+		RunAsUser: &user1,
+	}
+	dep = createDeploymentWithoutEngine(depName, "a", instance.Spec.Predictors[0].ComponentSpecs[0], &instance.Spec.Predictors[0], instance, securityContext, true)
+	g.Expect(*dep.Spec.Template.Spec.SecurityContext.RunAsUser).To(Equal(user1))
+}

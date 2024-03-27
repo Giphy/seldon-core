@@ -2,14 +2,15 @@
 # Below are the default values when installing Seldon Core
 
 # Defaults to .Release.Namespace
-namespaceOverride: "" 
+namespaceOverride: ""
 
 # ## Ingress Options
 # You are able to choose between Istio and Ambassador
 
 # If you have ambassador installed you can just use the enabled flag
 ambassador:
-  enabled: true
+  enabled: false
+  version: v2
   singleNamespace: false
 # When activating Istio, respecive virtual services will be created
 # You must make sure you create the seldon-gateway as well
@@ -27,7 +28,7 @@ certManager:
 
 # ## Install with limited namespace visibility
 # If you want to ensure seldon-core-controller can only have visibility
-#   to specifci namespaces you can set the controllerId
+#   to specify namespaces you can set the controllerId
 controllerId: ""
 
 # Whether operator should create the webhooks and configmap on startup (false means created from chart)
@@ -43,7 +44,7 @@ defaultUserID: "8888"
 managerUserID: 8888
 
 # ## Service Orchestrator (Executor)
-# The executor is the default service orchestrator which has superceeded the "Java Engine"
+# The executor is the default service orchestrator which has superceded the "Java Engine"
 executor:
   port: 8000
   metricsPortName: metrics
@@ -51,7 +52,7 @@ executor:
     pullPolicy: IfNotPresent
     registry: docker.io
     repository: seldonio/seldon-core-executor
-    tag: 1.7.0-dev
+    tag: 1.17.1
   resources:
     cpuLimit: 500m
     cpuRequest: 500m
@@ -66,18 +67,33 @@ executor:
 # For more information see the Production Integration for Payload Request Logging with ELK in the docs
   requestLogger:
     defaultEndpoint: 'http://default-broker'
+    workQueueSize: 10000
+    writeTimeoutMs: 2000
+  # Whether to run full protocol API based health checks on models in deployment graph. False will just do TCP connects
+  fullHealthChecks: false
+
 
 # ## Seldon Core Controller Manager Options
 image:
   pullPolicy: IfNotPresent
   registry: docker.io
   repository: seldonio/seldon-core-operator
-  tag: 1.7.0-dev
+  tag: 1.17.1
 manager:
   cpuLimit: 500m
   cpuRequest: 100m
   memoryLimit: 300Mi
   memoryRequest: 200Mi
+  logLevel: INFO
+  leaderElectionID: a33bd623.machinelearning.seldon.io
+  leaderElectionResourceLock:
+  leaderElectionLeaseDurationSecs: 15
+  leaderElectionRenewDeadlineSecs: 10
+  leaderElectionRetryPeriodSecs: 2
+  annotations: {}
+  containerSecurityContext: {}
+  deploymentNameAsPrefix: false
+  priorityClassName:
 rbac:
   configmap:
     create: true
@@ -89,17 +105,23 @@ singleNamespace: false
 storageInitializer:
   cpuLimit: "1"
   cpuRequest: 100m
-  image: gcr.io/kfserving/storage-initializer:v0.4.0
+  image: seldonio/rclone-storage-initializer:1.17.1
   memoryLimit: 1Gi
   memoryRequest: 100Mi
 usageMetrics:
   enabled: false
+# In scenarios like EKS with non-standard CNI plugin like calico, the control plane cannot reach the webhook
+# hence it is needed to set hostNetwork: true
+hostNetwork: false
 webhook:
-  port: 4443
+  port: 4443 # If 'hostNetwork: true' you might need to change this port if it is already used by the node
+metrics: # these are the metrics exposed by the controller pod
+  port: 8080 # If 'hostNetwork: true' you might need to change this port if it is already used by the node
 
 # ## Predictive Unit Values
 predictiveUnit:
-  port: 9000
+  httpPort: 9000
+  grpcPort: 9500
   metricsPortName: metrics
   # If you would like to add extra environment variables to the init container to make available
   #   secrets such as cloud credentials, you can provide a default secret name that will be loaded
@@ -109,37 +131,50 @@ predictor_servers:
   MLFLOW_SERVER:
     protocols:
       seldon:
-        defaultImageVersion: "1.7.0-dev"
+        defaultImageVersion: "1.17.1"
         image: seldonio/mlflowserver
+      v2:
+        defaultImageVersion: "1.3.5-mlflow"
+        image: seldonio/mlserver
   SKLEARN_SERVER:
     protocols:
       seldon:
-        defaultImageVersion: "1.7.0-dev"
+        defaultImageVersion: "1.17.1"
         image: seldonio/sklearnserver
-      kfserving:
-        defaultImageVersion: "0.1.1"
+      v2:
+        defaultImageVersion: "1.3.5-sklearn"
         image: seldonio/mlserver
   TENSORFLOW_SERVER:
     protocols:
       seldon:
-        defaultImageVersion: "1.7.0-dev"
+        defaultImageVersion: "1.17.1"
         image: seldonio/tfserving-proxy
-      tensorflow: 
+      tensorflow:
         defaultImageVersion: 2.1.0
         image:  tensorflow/serving
   XGBOOST_SERVER:
     protocols:
       seldon:
-        defaultImageVersion: "1.7.0-dev"
+        defaultImageVersion: "1.17.1"
         image: seldonio/xgboostserver
-      kfserving:
-        defaultImageVersion: "0.1.1"
+      v2:
+        defaultImageVersion: "1.3.5-xgboost"
         image: seldonio/mlserver
   TRITON_SERVER:
     protocols:
-      kfserving:
-        defaultImageVersion: "20.08-py3"
+      v2:
+        defaultImageVersion: "21.08-py3"
         image: nvcr.io/nvidia/tritonserver
+  HUGGINGFACE_SERVER:
+    protocols:
+      v2:
+        defaultImageVersion: "1.3.5-huggingface"
+        image: seldonio/mlserver
+  TEMPO_SERVER:
+    protocols:
+      v2:
+        defaultImageVersion: "1.3.5-slim"
+        image: seldonio/mlserver
 
 # ## Other
 # You can choose the crds to not be installed if you already installed them
@@ -150,6 +185,7 @@ crd:
   # Whether to force the use of the v1beta1 or v1 CRD.
   forceV1: false
   forceV1beta1: false
+  annotations: {} # Annotations to add to the CRD if not created by the Manager
 
 # Warning: credentials will be depricated soon, please use defaultEnvSecretRefName above
 # For more info please check the documentation
@@ -162,32 +198,7 @@ credentials:
 
 kubeflow: false
 
-# ## Engine parameters
-# Warning: Engine is being depricated in favour of Orchestrator
-# FOr more information please read the Upgrading section in the documentation
-engine:
-  grpc:
-    port: 5001
-  image:
-    pullPolicy: IfNotPresent
-    registry: docker.io
-    repository: seldonio/engine
-    tag: 1.7.0-dev
-  resources:
-    cpuLimit: 500m
-    cpuRequest: 500m
-    memoryLimit: 512Mi
-    memoryRequest: 512Mi
-  logMessagesExternally: false
-  port: 8000
-  prometheus:
-    path: /prometheus
-  serviceAccount:
-    name: default
-  user: 8888
-
-
 # Explainer image
 explainer:
-  image: seldonio/alibiexplainer:1.7.0-dev
-
+  image: seldonio/alibiexplainer:1.17.1
+  image_v2: seldonio/mlserver:1.3.5-alibi-explain

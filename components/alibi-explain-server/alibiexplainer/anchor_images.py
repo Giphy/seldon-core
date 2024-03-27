@@ -13,43 +13,43 @@
 # limitations under the License.
 
 #
-# Original source from https://github.com/kubeflow/kfserving/blob/master/python/alibiexplainer/alibiexplainer/anchor_images.py
+# Original source from https://github.com/kubeflow/kfserving/blob/master/python/
+# alibiexplainer/alibiexplainer/anchor_images.py
 # and then modified.
 #
 
 import logging
-import numpy as np
+from typing import List, Optional
+
 import alibi
+import numpy as np
 from alibi.api.interfaces import Explanation
-from alibi.utils.wrappers import ArgmaxTransformer
+
+from alibiexplainer.constants import (
+    EXPLAIN_RANDOM_SEED,
+    EXPLAIN_RANDOM_SEED_VALUE,
+    SELDON_LOGLEVEL,
+)
 from alibiexplainer.explainer_wrapper import ExplainerWrapper
-from alibiexplainer.constants import SELDON_LOGLEVEL
-from typing import Callable, List, Optional
 
 logging.basicConfig(level=SELDON_LOGLEVEL)
 
 
 class AnchorImages(ExplainerWrapper):
     def __init__(
-        self,
-        predict_fn: Callable,
-        explainer: Optional[alibi.explainers.AnchorImage],
-        **kwargs
-    ):
+        self, explainer: Optional[alibi.explainers.AnchorImage], **kwargs
+    ) -> None:
         if explainer is None:
             raise Exception("Anchor images requires a built explainer")
-        self.predict_fn = predict_fn
         self.anchors_image = explainer
+        if EXPLAIN_RANDOM_SEED == "True" and str(EXPLAIN_RANDOM_SEED_VALUE).isdigit():
+            self.seed = int(EXPLAIN_RANDOM_SEED_VALUE)
         self.kwargs = kwargs
 
     def explain(self, inputs: List) -> Explanation:
+        if hasattr(self, "seed"):
+            np.random.seed(self.seed)
         arr = np.array(inputs)
-        # check if predictor returns predicted class or prediction probabilities for each class
-        # if needed adjust predictor so it returns the predicted class
-        if np.argmax(self.predict_fn(arr).shape) == 0:
-            self.anchors_image.predictor = self.predict_fn
-        else:
-            self.anchors_image.predictor = ArgmaxTransformer(self.predict_fn)
         logging.info("Calling explain on image of shape %s", (arr.shape,))
         logging.info("anchor image call with %s", self.kwargs)
         anchor_exp = self.anchors_image.explain(arr[0], **self.kwargs)

@@ -9,6 +9,7 @@ import (
 	apiextensionsclient "k8s.io/apiextensions-apiserver/pkg/client/clientset/clientset"
 	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/client-go/discovery"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"os"
@@ -22,7 +23,7 @@ const (
 	CertsTLSCa  = "ca.crt"
 
 	ResourceFolder            = "/tmp/operator-resources"
-	CRDFilename               = "crd.yaml"
+	CRDFilenameV1             = "crd-v1.yaml"
 	MutatingWebhookFilename   = "mutate.yaml"
 	ValidatingWebhookFilename = "validate.yaml"
 	ConfigMapFilename         = "configmap.yaml"
@@ -46,26 +47,37 @@ func InitializeOperator(ctx context.Context, config *rest.Config, namespace stri
 
 	apiExtensionClient, err := apiextensionsclient.NewForConfig(config)
 	if err != nil {
+		logger.Error(err, "Failed to create apiextensionsClient")
 		return err
 	}
 
-	crdCreator := NewCrdCreator(ctx, apiExtensionClient, logger)
-	bytes, err := LoadBytesFromFile(ResourceFolder, CRDFilename)
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
 	if err != nil {
+		logger.Error(err, "Failed to create discoveryClient")
 		return err
 	}
-	crd, err := crdCreator.findOrCreateCRD(bytes)
+
+	crdCreator := NewCrdCreator(ctx, apiExtensionClient, discoveryClient, logger)
+	bytesV1, err := LoadBytesFromFile(ResourceFolder, CRDFilenameV1)
 	if err != nil {
+		logger.Error(err, "Failed to find crd v1", "resourcefolder", ResourceFolder, "filename", CRDFilenameV1)
+		return err
+	}
+	crd, err := crdCreator.findOrCreateCRD(bytesV1)
+	if err != nil {
+		logger.Error(err, "Failed to create CRD")
 		return err
 	}
 
 	clientset, err := kubernetes.NewForConfig(config)
 	if err != nil {
+		logger.Error(err, "Failed to create clientset")
 		return err
 	}
 
 	dep, err := findMyDeployment(ctx, clientset, namespace)
 	if err != nil {
+		logger.Error(err, "Failed to find deployment")
 		return err
 	}
 
@@ -74,32 +86,34 @@ func InitializeOperator(ctx context.Context, config *rest.Config, namespace stri
 	host2 := fmt.Sprintf("seldon-webhook-service.%s.svc", namespace)
 	certs, err := certSetup([]string{host1, host2})
 	if err != nil {
+		logger.Error(err, "Failed to create certs")
 		return err
 	}
 
 	// Create webhooks
-	wc, err := NewWebhookCreator(clientset, certs, logger, scheme)
-	if err != nil {
-		return err
-	}
+	wc := NewWebhookCreator(clientset, certs, logger, scheme)
 
 	//Create/Update Validating Webhook
-	bytes, err = LoadBytesFromFile(ResourceFolder, ValidatingWebhookFilename)
+	bytes, err := LoadBytesFromFile(ResourceFolder, ValidatingWebhookFilename)
 	if err != nil {
+		logger.Error(err, "Failed to find webhook file", "resourcefolder", ResourceFolder, "filename", ValidatingWebhookFilename)
 		return err
 	}
 	err = wc.CreateValidatingWebhookConfigurationFromFile(ctx, bytes, namespace, crd, watchNamespace)
 	if err != nil {
+		logger.Error(err, "Failed to create validating webhook")
 		return err
 	}
 
 	//Create/Update Webhook Service
 	bytes, err = LoadBytesFromFile(ResourceFolder, ServiceFilename)
 	if err != nil {
+		logger.Error(err, "Failed to find webhook service", "resourcefolder", ResourceFolder, "filename", ServiceFilename)
 		return err
 	}
 	err = wc.CreateWebhookServiceFromFile(ctx, bytes, namespace, dep)
 	if err != nil {
+		logger.Error(err, "Failed to create webhook service")
 		return err
 	}
 
@@ -107,39 +121,52 @@ func InitializeOperator(ctx context.Context, config *rest.Config, namespace stri
 	cc := NewConfigmapCreator(clientset, logger, scheme)
 	bytes, err = LoadBytesFromFile(ResourceFolder, ConfigMapFilename)
 	if err != nil {
+		logger.Error(err, "Failed to find configmap", "resourcefolder", ResourceFolder, "filename", ConfigMapFilename)
 		return err
 	}
 	err = cc.CreateConfigmap(ctx, bytes, namespace, dep)
 	if err != nil {
+		logger.Error(err, "Failed to create webhook")
 		return err
 	}
 
 	// Create cert files
-	createCertFiles(certs, logger)
+	err = createCertFiles(certs, logger)
+	if err != nil {
+		logger.Error(err, "Failed to create crts files")
+		return err
+	}
 
 	return nil
 }
 
 func createCertFiles(certs *Cert, logger logr.Logger) error {
 	//Save certs to filesystem
-	os.MkdirAll(CertsFolder, os.ModePerm)
+	err := os.MkdirAll(CertsFolder, os.ModePerm)
+	if err != nil {
+		logger.Error(err, "Failed to create folder", "folder", CertsFolder)
+		return err
+	}
 
 	filename := fmt.Sprintf("%s/%s", CertsFolder, CertsTLSCa)
 	logger.Info("Creating ", "filename", filename)
-	err := ioutil.WriteFile(filename, []byte(certs.caPEM), 0600)
+	err = ioutil.WriteFile(filename, []byte(certs.caPEM), 0600)
 	if err != nil {
+		logger.Error(err, "failed to create cert file", "filename", filename)
 		return err
 	}
 	filename = fmt.Sprintf("%s/%s", CertsFolder, CertsTLSKey)
 	logger.Info("Creating ", "filename", filename)
 	err = ioutil.WriteFile(filename, []byte(certs.privKeyPEM), 0600)
 	if err != nil {
+		logger.Error(err, "failed to create cert file", "filename", filename)
 		return err
 	}
 	filename = fmt.Sprintf("%s/%s", CertsFolder, CertsTLSCrt)
 	logger.Info("Creating ", "filename", filename)
 	err = ioutil.WriteFile(filename, []byte(certs.certificatePEM), 0600)
 	if err != nil {
+		logger.Error(err, "failed to create cert file", "filename", filename)
 		return err
 	}
 

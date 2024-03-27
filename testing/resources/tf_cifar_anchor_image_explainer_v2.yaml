@@ -1,0 +1,20 @@
+apiVersion: machinelearning.seldon.io/v1
+kind: SeldonDeployment
+metadata:
+  name: cifar10
+spec:
+  protocol: v2
+  annotations:
+    seldon.io/rest-timeout: "100000"
+  predictors:
+  - graph:
+      implementation: TRITON_SERVER
+      modelUri: gs://seldon-models/triton/tf_cifar10
+      name: cifar10
+      logger:
+         mode: all
+    explainer:
+      type: AnchorImages
+      modelUri: gs://seldon-models/tfserving/cifar10/cifar10_anchor_image_py3.8_alibi-0.8.0
+    name: default
+    replicas: 1

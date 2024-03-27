@@ -1,33 +1,69 @@
-FROM registry.access.redhat.com/ubi8/python-36
+ARG VERSION
+ARG BASE_IMAGE
+FROM ${BASE_IMAGE}:${VERSION} as base
+
+ARG VERSION
 LABEL name="Seldon Alibi Wrapper" \
       vendor="Seldon Technologies" \
-      version="1.7.0-dev" \
+      version="1.17.1" \
       release="1" \
       summary="Alibi Explainer Wrapper for Seldon Core" \
       description="Allows Seldon Core inference models to run with a black box model explanation model from the Alibi:Explain project"
 
-USER root
-RUN yum -y update-minimal --security --sec-severity=Important --sec-severity=Critical
+FROM base as builder
 
-# CVE https://github.com/SeldonIO/seldon-core/issues/2960
-RUN yum remove -y nodejs httpd
+# Install Python / Conda
+RUN microdnf update -y && \
+    pip install --upgrade pip setuptools wheel && \
+    microdnf install -y git make automake gcc gcc-c++
 
-USER default
-RUN pip install \
-    --upgrade pip \
-    --upgrade setuptools \
-    --upgrade wheel
+# Make home dir
+RUN mkdir microservice
+WORKDIR /microservice
 
-COPY setup.py setup.py
+# Install Poetry
+ENV POETRY_HOME /microservice/.poetry
+RUN curl -sSL https://install.python-poetry.org | python3 - --version 1.1.15
+
+ENV PATH "$POETRY_HOME/bin:$PATH"
+ENV POETRY_VIRTUALENVS_CREATE false
+
+# Install the server
+COPY poetry.lock pyproject.toml ./
+## Disable Poetry's new installer to avoid JSONDecodeError
+## https://github.com/python-poetry/poetry/issues/4210
+## NOTE: Removing explicitly requirements.txt file from subdeps test
+## dependencies causing false positives in Snyk.
+RUN poetry config experimental.new-installer false && \
+    poetry install && \
+    rm ~/.cache/pip -rf && \
+    rm -f /opt/conda/lib/python3.8/site-packages/gslib/vendored/boto/requirements.txt \
+          /opt/conda/lib/python3.8/site-packages/gslib/vendored/oauth2client/docs/requirements.txt \
+          /opt/conda/lib/python3.8/site-packages/spacy/tests/package/requirements.txt
+
+
+# Add licences
+RUN mkdir /licenses
+RUN mkdir ./licenses && pip-licenses --from=mixed --format=csv --output-file=./licenses/license_info.csv && \
+    pip-licenses --from=mixed --format=plain-vertical --with-license-file --no-license-path --output-file=./licenses/license.txt
+RUN cp ./licenses/* /licenses
+
+# Install python spacy model to avoid issues in airgapped envs
+RUN python -m spacy download en_core_web_md
+
+
+# Copy rest of the package
 COPY alibiexplainer alibiexplainer
 COPY README.md README.md
 
-# Required for https://github.com/slundberg/shap/issues/1633
-RUN pip install numpy==1.19.04 . --no-binary protobuf
+FROM base as final
+WORKDIR /microservice
 
-# Add licences
-RUN pip install pip-licenses
-RUN mkdir ./licenses && pip-licenses --from=mixed --format=csv --output-file=./licenses/license_info.csv && \
-    pip-licenses --from=mixed --format=plain-vertical --with-license-file --no-license-path --output-file=./licenses/license.txt
+RUN microdnf -y update
 
+COPY --from=builder /microservice /microservice
+COPY --from=builder /licenses /licenses
+COPY --from=builder /opt/conda /opt/conda
+
+USER 8888
 ENTRYPOINT ["python", "-m", "alibiexplainer"]

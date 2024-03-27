@@ -1,7 +1,15 @@
 # Seldon Core: Blazing Fast, Industry-Ready ML
 An open source platform to deploy your machine learning models on Kubernetes at massive scale.
 
-![](https://raw.githubusercontent.com/SeldonIO/seldon-core/master/doc/source/images/core-logo-small.png)
+## Seldon Core V2 Now Available
+
+[![scv2_image](https://raw.githubusercontent.com/SeldonIO/seldon-core/master/doc/source/_static/scv2_banner.png)](https://docs.seldon.io/projects/seldon-core/en/v2/index.html)
+
+[Seldon Core V2](https://docs.seldon.io/projects/seldon-core/en/v2/index.html) **is now available**. If you're new to Seldon Core we recommend you [start here](https://docs.seldon.io/projects/seldon-core/en/v2/contents/getting-started/index.html). Check out the [docs here](https://docs.seldon.io/projects/seldon-core/en/v2/index.html) and make sure to leave feedback on [our slack community](https://join.slack.com/t/seldondev/shared_invite/zt-vejg6ttd-ksZiQs3O_HOtPQsen_labg) and [submit bugs or feature requests on the repo](https://github.com/SeldonIO/seldon-core/issues/new/choose). The codebase can be found [in this branch](https://github.com/SeldonIO/seldon-core/tree/v2).
+
+Continue reading for info on Seldon Core V1...
+
+[![video_play_icon](https://raw.githubusercontent.com/SeldonIO/seldon-core/master/doc/source/images/core-play-logo.png)](https://www.youtube.com/watch?v=5Q-03We8aDE)
 
 ## Overview
 
@@ -10,7 +18,7 @@ Seldon core converts your ML models (Tensorflow, Pytorch, H2o, etc.) or language
 Seldon handles scaling to thousands of production machine learning models and provides advanced machine learning capabilities out of the box including Advanced Metrics, Request Logging, Explainers, Outlier Detectors, A/B Tests, Canaries and more.
 
 * Read the [Seldon Core Documentation](https://docs.seldon.io/projects/seldon-core/en/latest/)
-* Join our [community Slack](https://join.slack.com/t/seldondev/shared_invite/enQtMzA2Mzk1Mzg0NjczLTJlNjQ1NTE5Y2MzMWIwMGUzYjNmZGFjZjUxODU5Y2EyMDY0M2U3ZmRiYTBkOTRjMzZhZjA4NjJkNDkxZTA2YmU) to ask any questions
+* Join our [community Slack](https://join.slack.com/t/seldondev/shared_invite/zt-vejg6ttd-ksZiQs3O_HOtPQsen_labg) to ask any questions
 * Get started with [Seldon Core Notebook Examples](https://docs.seldon.io/projects/seldon-core/en/latest/examples/notebooks.html)
 * Join our fortnightly [online working group calls](https://docs.seldon.io/projects/seldon-core/en/latest/developer/community.html) : [Google Calendar](https://calendar.google.com/event?action=TEMPLATE&tmeid=MXBtNzI1cjk0dG9kczhsZTRkcWlmcm1kdjVfMjAyMDA3MDlUMTUwMDAwWiBzZWxkb24uaW9fbTRuMnZtcmZubDI3M3FsczVnYjlwNjVpMHNAZw&tmsrc=seldon.io_m4n2vmrfnl273qls5gb9p65i0s%40group.calendar.google.com&scp=ALL)
 * Learn how you can [start contributing](https://docs.seldon.io/projects/seldon-core/en/latest/developer/contributing.html)
@@ -27,9 +35,9 @@ With over 2M installs, Seldon Core is used across organisations to manage large 
  * Out of the box endpoints which can be tested through [Swagger UI](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/openapi.html?highlight=swagger), [Seldon Python Client or Curl / GRPCurl](https://docs.seldon.io/projects/seldon-core/en/latest/python/python_module.html#seldon-core-python-api-client).
  * Cloud agnostic and tested on [AWS EKS, Azure AKS, Google GKE, Alicloud, Digital Ocean and Openshift](https://docs.seldon.io/projects/seldon-core/en/latest/examples/notebooks.html#cloud-specific-examples).
  * Powerful and rich inference graphs made out of [predictors, transformers, routers, combiners, and more](https://docs.seldon.io/projects/seldon-core/en/latest/examples/graph-metadata.html).
- * Metadata provenance to ensure each model can be traced back to its respective[ training system, data and metrics](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/metadata.html).
+ * Metadata provenance to ensure each model can be traced back to its respective [training system, data and metrics](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/metadata.html).
  * Advanced and customisable metrics with integration [to Prometheus and Grafana](https://docs.seldon.io/projects/seldon-core/en/latest/analytics/analytics.html).
- * Full auditability through model input-output request (logging integration with Elasticsearch)[https://docs.seldon.io/projects/seldon-core/en/latest/analytics/log_level.html].
+ * Full auditability through model input-output request [logging integration with Elasticsearch](https://docs.seldon.io/projects/seldon-core/en/latest/analytics/log_level.html).
  * Microservice distributed tracing through [integration to Jaeger](https://docs.seldon.io/projects/seldon-core/en/latest/graph/distributed-tracing.html) for insights on latency across microservice hops.
  * Secure, reliable and robust system maintained through a consistent [security & updates policy](https://github.com/SeldonIO/seldon-core/blob/master/SECURITY.md).
 
@@ -60,7 +68,7 @@ We provide optimized model servers for some of the most popular Deep Learning an
 You only have to upload your model binaries into your preferred object store, in this case we have a trained scikit-learn iris model in a Google bucket:
 
 ```console
-gs://seldon-models/sklearn/iris/model.joblib
+gs://seldon-models/v1.17.1/sklearn/iris/model.joblib
 ```
 
 Create a namespace to run your model in:
@@ -83,7 +91,7 @@ spec:
   predictors:
   - graph:
       implementation: SKLEARN_SERVER
-      modelUri: gs://seldon-models/sklearn/iris
+      modelUri: gs://seldon-models/v1.17.1/sklearn/iris
       name: classifier
     name: default
     replicas: 1
@@ -161,10 +169,10 @@ spec:
   predictors:
   - componentSpecs:
     - spec:
-      containers:
-      - name: classifier
-        image: sklearn_iris:0.1
-  - graph:
+        containers:
+        - name: classifier
+          image: sklearn_iris:0.1
+    graph:
       name: classifier
     name: default
     replicas: 1
@@ -346,7 +354,6 @@ Below are some of the core components together with link to the logs that provid
 ### Reference
 
 * [Annotation-based Configuration ](https://docs.seldon.io/projects/seldon-core/en/latest/graph/annotations.html)
-* [AWS Marketplace Install ](https://docs.seldon.io/projects/seldon-core/en/latest/reference/aws-mp-install.html)
 * [Benchmarking ](https://docs.seldon.io/projects/seldon-core/en/latest/reference/benchmarking.html)
 * [General Availability ](https://docs.seldon.io/projects/seldon-core/en/latest/reference/ga.html)
 * [Helm Charts ](https://docs.seldon.io/projects/seldon-core/en/latest/graph/helm_charts.html)

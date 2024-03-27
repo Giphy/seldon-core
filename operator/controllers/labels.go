@@ -2,6 +2,7 @@ package controllers
 
 import (
 	machinelearningv1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
+	"github.com/seldonio/seldon-core/operator/controllers/utils"
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 )
@@ -20,17 +21,11 @@ func addLabelsToService(svc *corev1.Service, pu *machinelearningv1.PredictiveUni
 		case machinelearningv1.OUTPUT_TRANSFORMER:
 			svc.Labels[machinelearningv1.Label_output_transformer] = "true"
 		}
-	} else if !isEmptyExplainer(p.Explainer) {
+	} else if !utils.IsEmptyExplainer(p.Explainer) {
 		svc.Labels[machinelearningv1.Label_explainer] = "true"
-	}
-	if p.Shadow != true && (p.Traffic >= 50 || p.Traffic == 0) {
-		svc.Labels[machinelearningv1.Label_default] = "true"
 	}
 	if p.Shadow == true {
 		svc.Labels[machinelearningv1.Label_shadow] = "true"
-	}
-	if p.Traffic < 50 && p.Traffic > 0 {
-		svc.Labels[machinelearningv1.Label_canary] = "true"
 	}
 	svc.Labels[machinelearningv1.Label_managed_by] = machinelearningv1.Label_value_seldon
 	return svc
@@ -55,21 +50,13 @@ func addLabelsToDeployment(deploy *appsv1.Deployment, pu *machinelearningv1.Pred
 			deploy.Labels[machinelearningv1.Label_output_transformer] = "true"
 			deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_output_transformer] = "true"
 		}
-	} else if !isEmptyExplainer(p.Explainer) {
+	} else if !utils.IsEmptyExplainer(p.Explainer) {
 		deploy.Labels[machinelearningv1.Label_explainer] = "true"
 		deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_explainer] = "true"
-	}
-	if p.Shadow != true && (p.Traffic >= 50 || p.Traffic == 0) {
-		deploy.Labels[machinelearningv1.Label_default] = "true"
-		deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_default] = "true"
 	}
 	if p.Shadow == true {
 		deploy.Labels[machinelearningv1.Label_shadow] = "true"
 		deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_shadow] = "true"
-	}
-	if p.Traffic < 50 && p.Traffic > 0 {
-		deploy.Labels[machinelearningv1.Label_canary] = "true"
-		deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_canary] = "true"
 	}
 	deploy.ObjectMeta.Labels[machinelearningv1.Label_managed_by] = machinelearningv1.Label_value_seldon
 	deploy.Spec.Template.ObjectMeta.Labels[machinelearningv1.Label_managed_by] = machinelearningv1.Label_value_seldon

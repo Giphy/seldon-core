@@ -179,7 +179,6 @@ def send_feedback(
     -------
 
     """
-    is_proto = isinstance(request, prediction_pb2.SeldonMessage)
     seldon_metrics.update_reward(request.reward)
 
     if hasattr(user_model, "send_feedback_rest"):
@@ -196,7 +195,7 @@ def send_feedback(
             try:
                 response = user_model.send_feedback_raw(request)
                 handle_raw_custom_metrics(
-                    response, seldon_metrics, is_proto, FEEDBACK_METRIC_METHOD_TAG
+                    response, seldon_metrics, True, FEEDBACK_METRIC_METHOD_TAG
                 )
                 return response
             except SeldonNotImplementedError:
@@ -536,10 +535,12 @@ def aggregate(
 
     def merge_meta(meta_list):
         tags = {}
+        requestPath = {}
         for meta in meta_list:
             if meta:
                 tags.update(meta.get("tags", {}))
-        return {"tags": tags}
+                requestPath.update(meta.get("requestPath", {}))
+        return {"tags": tags, "requestPath": requestPath}
 
     def merge_metrics(meta_list, custom_metrics):
         metrics = []

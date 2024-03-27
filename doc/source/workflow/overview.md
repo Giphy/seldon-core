@@ -3,7 +3,7 @@
 Seldon core converts your ML models into production ready REST/gRPC microservices.
 
 These are Seldon Core main components:
-- Reusable and non-reusable [model servers](./overview.html#model-servers)
+- Reusable and non-reusable [model servers](./overview.html#e2e-serving-with-model-servers)
 - [Language Wrappers](./overview.html#language-wrappers) to containerise models
 - [SeldonDeployment](./overview.html#seldondeployment-crd) CRD and [Seldon Core Operator](./overview.html#seldon-core-operator)
 - [Service Orchestrator](./overview.html#service-orchestrator) for advanced inference graphs
@@ -19,7 +19,7 @@ Keep reading to learn more!
 
 ## E2E Serving with Model Servers
 
-With `Seldon Core` you can take and put it directly into the production using our flexible `Model Servers`.
+With `Seldon Core` you can take your model and put it directly into the production using our flexible `Model Servers`.
 
 ![](../images/e2e-model-serving.svg)
 
@@ -111,7 +111,7 @@ To complete containerisation process you need two more components:
 
 Once these are in place you can use a simple s2i command
 ```bash
-s2i build . seldonio/seldon-core-s2i-python3:1.7.0-dev model:0.1
+s2i build . seldonio/seldon-core-s2i-python3:1.17.1 model:0.1
 ```
 to create ready to use Docker image.
 
@@ -140,7 +140,7 @@ Read more about [Seldon Deployment CRD on its dedicated documentation page](../r
 
 ## Seldon Core Operator
 
-Seldon Core `Operator`, build using [Kubebuilder](https://github.com/kubernetes-sigs/kubebuilder), is what controls your `Seldon Deployments` in the `Kubernetes` cluster.
+The Seldon Core `Operator` is what controls your `Seldon Deployments` in the `Kubernetes` cluster.
 It reads the CRD definition of `Seldon Deployment` resources applied to the cluster and takes
 care that all required components like `Pods` and `Services` are created.
 
@@ -189,33 +189,14 @@ Read more about [metadata provenance on its dedicated documentation page](../ref
 Metrics is important aspect of serving ML inference models in production.
 Out of the box Seldon Core deployments expose standard metrics to [Prometheus](https://prometheus.io/) on the `Service Orchestrator`.
 
-![](../images/metrics.svg)
-
-Users can also define their custom metrics that will be exposed by models directly.
-To add metrics to Python models one can simply define `metrics` method:
-```python
-class Model:
-    ...
-
-    def metrics(self):
-        return [
-            # a counter which will increase by the given value
-            {"type": "COUNTER", "key": "mycounter", "value": 1},
-
-            # a gauge which will be set to given value
-            {"type": "GAUGE", "key": "mygauge", "value": 100},
-
-            # a timer which will add sum and count metrics - assumed millisecs
-            {"type": "TIMER", "key": "mytimer", "value": 20.2},
-        ]
-```
+![](../images/metrics.png)
 
 Read more about [metrics on its dedicated documentation page](../analytics/analytics.html).
 
 
 ## Distributed Tracing with Jaeger
 
-You can use Open Tracing to trace your API calls to Seldon Core. By default we support [Jaeger](https://www.jaegertracing.io/) for Distributed Tracing, which will allow you to obtain insights on latency and performance across each microservice-hop in your Seldon deployment.
+By default, we support [Jaeger](https://www.jaegertracing.io/) for Distributed Tracing.
 
 ![](../images/tracing.svg)
 

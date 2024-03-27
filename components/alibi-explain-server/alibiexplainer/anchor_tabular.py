@@ -13,53 +13,43 @@
 # limitations under the License.
 
 #
-# Original source from https://github.com/kubeflow/kfserving/blob/master/python/alibiexplainer/alibiexplainer/anchor_tabular.py
+# Original source from https://github.com/kubeflow/kfserving/blob/master/python/
+# alibiexplainer/alibiexplainer/anchor_tabular.py
 # and since modified
 #
 
 import logging
-import numpy as np
+from typing import List, Optional
+
 import alibi
+import numpy as np
 from alibi.api.interfaces import Explanation
-from alibi.utils.wrappers import ArgmaxTransformer
+
+from alibiexplainer.constants import (
+    EXPLAIN_RANDOM_SEED,
+    EXPLAIN_RANDOM_SEED_VALUE,
+    SELDON_LOGLEVEL,
+)
 from alibiexplainer.explainer_wrapper import ExplainerWrapper
-from alibiexplainer.constants import SELDON_LOGLEVEL
-from typing import Callable, List, Optional
 
 logging.basicConfig(level=SELDON_LOGLEVEL)
 
 
 class AnchorTabular(ExplainerWrapper):
-    def __init__(
-        self,
-        predict_fn: Callable,
-        explainer=Optional[alibi.explainers.AnchorTabular],
-        **kwargs
-    ):
+    def __init__(self, explainer=Optional[alibi.explainers.AnchorTabular], **kwargs):
         if explainer is None:
-            raise Exception("Anchor images requires a built explainer")
-        self.predict_fn = predict_fn
+            raise Exception("Anchor tabular requires a built explainer")
         self.anchors_tabular: alibi.explainers.AnchorTabular = explainer
         self.anchors_tabular = explainer
+        if EXPLAIN_RANDOM_SEED == "True" and str(EXPLAIN_RANDOM_SEED_VALUE).isdigit():
+            self.seed = int(EXPLAIN_RANDOM_SEED_VALUE)
         self.kwargs = kwargs
 
     def explain(self, inputs: List) -> Explanation:
+        if hasattr(self, "seed"):
+            np.random.seed(self.seed)
         arr = np.array(inputs)
-        # set anchor_tabular predict function so it always returns predicted class
-        # See anchor_tablular.__init__
-        logging.info("Arr shape %s ", (arr.shape,))
-
-        # check if predictor returns predicted class or prediction probabilities for each class
-        # if needed adjust predictor so it returns the predicted class
-        if np.argmax(self.predict_fn(arr).shape) == 0:
-            self.anchors_tabular.predictor = self.predict_fn
-            self.anchors_tabular.samplers[0].predictor = self.predict_fn
-        else:
-            self.anchors_tabular.predictor = ArgmaxTransformer(self.predict_fn)
-            self.anchors_tabular.samplers[0].predictor = ArgmaxTransformer(
-                self.predict_fn
-            )
-
-        # We assume the input has batch dimension but Alibi explainers presently assume no batch
+        # We assume the input has batch dimension
+        # but Alibi explainers presently assume no batch
         anchor_exp = self.anchors_tabular.explain(arr[0], **self.kwargs)
         return anchor_exp

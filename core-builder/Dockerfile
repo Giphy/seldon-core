@@ -1,6 +1,6 @@
 FROM openjdk:13.0.1-jdk-buster
 
-ENV PYTHON_VERSION "3.6.10"
+ENV PYTHON_VERSION "3.8.10"
 
 # install docker
 RUN \
@@ -28,7 +28,7 @@ RUN wget https://github.com/openshift/source-to-image/releases/download/v1.1.14/
     mv ./sti /bin
 
 # Installing KIND
-RUN wget https://github.com/kubernetes-sigs/kind/releases/download/v0.6.1/kind-linux-amd64 && \
+RUN wget https://github.com/kubernetes-sigs/kind/releases/download/v0.14.0/kind-linux-amd64 && \
     chmod +x kind-linux-amd64 && \
     mv ./kind-linux-amd64 /bin/kind
 
@@ -45,10 +45,10 @@ RUN \
     rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 
 # Install maven
-ENV MAVEN_VERSION=3.6.3
+ENV MAVEN_VERSION=3.9.3
 ENV USER_HOME_DIR="/root"
-ENV SHA=c35a1803a6e70a126e80b2b3ae33eed961f83ed74d18fcd16909b2d44d7dada3203f1ffe726c17ef8dcca2dcaa9fca676987befeadc9b9f759967a8cb77181c0
-ENV BASE_URL=https://apache.osuosl.org/maven/maven-3/${MAVEN_VERSION}/binaries
+ENV SHA=400fc5b6d000c158d5ee7937543faa06b6bda8408caa2444a9c947c21472fde0f0b64ac452b8cec8855d528c0335522ed5b6c8f77085811c7e29e1bedbb5daa2
+ENV BASE_URL=https://dlcdn.apache.org/maven/maven-3/${MAVEN_VERSION}/binaries
 RUN mkdir -p /usr/share/maven /usr/share/maven/ref \
   && curl -fsSL -o /tmp/apache-maven.tar.gz ${BASE_URL}/apache-maven-${MAVEN_VERSION}-bin.tar.gz \
   && echo "${SHA}  /tmp/apache-maven.tar.gz" | sha512sum -c - \
@@ -67,22 +67,21 @@ RUN apt-get upgrade && \
 	apt-get install libbz2-dev -y && \
 	apt-get install liblzma-dev -y
 
-RUN curl -SLO https://www.python.org/ftp/python/${PYTHON_VERSION}/Python-${PYTHON_VERSION}.tgz \
-    && tar xvf Python-${PYTHON_VERSION}.tgz \
-    && cd Python-${PYTHON_VERSION} \
-    && ./configure --prefix=/usr/local --with-openssl \
-    && make \
-    && make altinstall \
-    && cd / \
-    && rm -rf Python-${PYTHON_VERSION}* \
-    && (cd /usr/local/bin && ln -svn python3.6 python)
+ENV CONDA_DOWNLOAD_VERSION="py38_23.3.1-0"
+ENV CONDA_VERSION "23.5.0"
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-${CONDA_DOWNLOAD_VERSION}-Linux-x86_64.sh -O ~/miniconda.sh && \
+    /bin/bash ~/miniconda.sh -b -p /opt/conda && \
+    rm ~/miniconda.sh && \
+    /opt/conda/bin/conda clean -tipy && \
+    ln -s /opt/conda/etc/profile.d/conda.sh /etc/profile.d/conda.sh && \
+    echo ". /opt/conda/etc/profile.d/conda.sh" >> ~/.bashrc && \
+    echo "conda activate base" >> ~/.bashrc && \
+    chgrp -R root /opt/conda && chmod -R g+rw /opt/conda
+ENV PATH="/opt/conda/bin:${PATH}"
+ENV PYTHON_VERSION "3.8.10"
 
-# Ensure python3 and pip3 are default
-RUN curl -sS https://bootstrap.pypa.io/get-pip.py >>setup.py && \
-        python setup.py
-RUN update-alternatives --install /usr/bin/python python /usr/local/bin/python3.6 1
-RUN rm -rf /usr/local/bin/pip && \
-        ln -s /usr/local/bin/pip3.6 /usr/local/bin/pip
+# This is to install desired version of Python without updating conda version
+RUN conda install --yes python=$PYTHON_VERSION conda=$CONDA_VERSION
 
 # Upgrade and install some Python packages
 RUN pip install --upgrade pip setuptools wheel
@@ -93,10 +92,12 @@ RUN apt-get remove -y --auto-remove \
 
 # INSTALL GO
 ENV PATH /usr/local/go/bin:$PATH
-RUN wget https://dl.google.com/go/go1.14.7.linux-amd64.tar.gz && \
-        tar -zxvf go1.14.7.linux-amd64.tar.gz && \
+RUN wget https://dl.google.com/go/go1.17.7.linux-amd64.tar.gz && \
+        tar -zxvf go1.17.7.linux-amd64.tar.gz && \
         mv go/ /usr/local/go
-RUN curl -sL https://go.kubebuilder.io/dl/2.3.0/linux/amd64 | tar -xz -C /tmp/ && \
+
+# Install kubebuilder (using github link)
+RUN curl -sL https://github.com/kubernetes-sigs/kubebuilder/releases/download/v2.3.0/kubebuilder_2.3.0_linux_amd64.tar.gz | tar -xz -C /tmp/ && \
         mv /tmp/kubebuilder_2.3.0_linux_amd64 /usr/local/kubebuilder/
 ENV PATH /usr/local/kubebuilder/bin:$PATH
 
@@ -104,9 +105,10 @@ ENV PATH /usr/local/kubebuilder/bin:$PATH
 RUN curl -L https://raw.githubusercontent.com/helm/helm/master/scripts/get-helm-3 | bash -s -- --version v3.2.0
 
 # DOWNLOAD KUSTOMIZE
-RUN wget https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv3.2.3/kustomize_kustomize.v3.2.3_linux_amd64 && \
-        chmod +x kustomize_kustomize.v3.2.3_linux_amd64 && \
-        mv kustomize_kustomize.v3.2.3_linux_amd64 /usr/local/bin/kustomize
+RUN wget https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv4.1.2/kustomize_v4.1.2_linux_amd64.tar.gz && \
+    	tar -xzf kustomize_v4.1.2_linux_amd64.tar.gz && \
+        chmod +x kustomize && \
+        mv kustomize /usr/local/bin/kustomize
 
 # iptables fix
 RUN \
@@ -118,7 +120,7 @@ RUN pip install jupyter
 
 # Install grpcurl
 RUN go get github.com/fullstorydev/grpcurl/... && \
-    go install github.com/fullstorydev/grpcurl/cmd/grpcurl
+    go install github.com/fullstorydev/grpcurl/cmd/grpcurl@latest
 
 ENV PATH="${PATH}:/root/go/bin"
 
@@ -131,6 +133,24 @@ RUN go get -u github.com/onsi/ginkgo/ginkgo
 
 # Helm docs
 RUN GO111MODULE=on go get github.com/norwoodj/helm-docs/cmd/helm-docs@f66fdbd6fe
+
+# Argo workflows CLI
+RUN wget https://github.com/argoproj/argo-workflows/releases/download/v3.0.8/argo-linux-amd64.gz && \
+    gunzip argo-linux-amd64.gz && \
+    mv argo-linux-amd64 argo && \
+    chmod a+x argo && \
+    mv argo /usr/local/bin/argo
+
+# Installing jx
+RUN wget https://github.com/jenkins-x/jx-cli/releases/download/v3.1.242/jx-cli-linux-amd64.tar.gz && \
+    tar -zxvf jx-cli-linux-amd64.tar.gz && \
+    chmod a+x jx && \
+    mv jx /usr/local/bin/jx
+
+RUN curl -O https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-349.0.0-linux-x86_64.tar.gz && \
+    tar xvfz google-cloud-sdk-349.0.0-linux-x86_64.tar.gz -C /tmp/ && \
+    mv /tmp/google-cloud-sdk /usr/local/google-cloud-sdk
+ENV PATH /usr/local/google-cloud-sdk/bin:$PATH
 
 WORKDIR /work
 

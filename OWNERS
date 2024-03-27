@@ -1,23 +1,20 @@
 approvers:
-- axsaucedo
-- gsunner
-- cliveseldon
-- ryandawsonuk
 - adriangonz
-- SachinVarghese
-- RafalSkolasinski
+- agrski
+- cliveseldon
+- gsunner
 - jklaise
-- ivan-valkov
+- majolo
+- RafalSkolasinski
+- SachinVarghese
 reviewers:
-- axsaucedo
-- gsunner
-- cliveseldon
-- jklaise
-- ryandawsonuk
-- gipster
-- arnaudvl
 - adriangonz
-- phsiao
-- SachinVarghese
+- agrski
+- arnaudvl
+- cliveseldon
+- gipster
+- gsunner
+- jklaise
+- majolo
 - RafalSkolasinski
-- ivan-valkov
+- SachinVarghese

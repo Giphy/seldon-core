@@ -15,13 +15,10 @@ kubectl apply -f https://github.com/operator-framework/operator-lifecycle-manage
 kubectl apply -f https://github.com/operator-framework/operator-lifecycle-manager/releases/download/0.16.1/olm.yaml
 ```
 
-For the marketplace you need a patched installed [pending in this PR](https://github.com/operator-framework/operator-marketplace/pull/342).
-
-Temporary fix:
 
 ```bash
-git clone git@github.com:cliveseldon/operator-marketplace.git fork-operator-marketplace
-kubectl create -f fork-operator-marketplace/deploy/upstream/
+git clone https://github.com/operator-framework/operator-marketplace.git
+kubectl create -f operator-marketplace/deploy/upstream/
 ```
 
 Create the bundle image, check and push. Create opm_index, and push if not done so already.
@@ -61,7 +58,9 @@ kubectl create -f operator-subscription.yaml
 This should create the seldon-controller manager. Once running you can test. It will be namespace only so will only manage sdeps in marketplace namespace.
 
 
-## Openshift Cluster
+## Openshift Cluster (Community Operator Test)
+
+[Create Openshift Cluster](https://cloud.redhat.com/openshift/). We use AWS and this can be done simply using the rosa command line tool. You will need RedHat connect login details and AWS account details.
 
 Create catalog source
 
@@ -71,30 +70,33 @@ kubectl create -f catalog-source-openshift.yaml
 
 Check
 
-```
+```bash
 kubectl get catalogsource seldon-core-catalog -n openshift-marketplace -o yaml
 ```
 
 At present need to create operator from Openshift UI.
 
+Note: in case you need to test new bundle first remove the operator using OpenShift UI, then remove catalog using
+
+```bash
+kubectl delete -f catalog-source-openshift.yaml
+```
+
+and apply it again.
 
 
-## Openshift Cluster Certified
+## Openshift Cluster (Certified Operator Test)
 
-Create catalog source
-
+1. Create Catalog Source
 ```bash
 kubectl create -f catalog-source-openshift-certified.yaml
 ```
-
-Check
-
-```
+2. Check
+```bash
 kubectl get catalogsource seldon-core-catalog-certified -n openshift-marketplace -o yaml
+3. Install manually and verify it works properly
+4. Delete Operator Via UI
+5. Delete Catalog Source
+```bash
+kubectl delete -f catalog-source-openshift-certified.yaml
 ```
-
-At present need to create operator from Openshift UI.
-
-
-
-

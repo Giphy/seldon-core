@@ -18,9 +18,7 @@ The expected versions in the latest SKLearn pre-packaged server are as follows:
 
 | Package | Version |
 | ------ | ----- |
-| `scikit-learn` | `0.23.2` |
-| `joblib` | `0.16.0` |
-| `numpy` | `1.8.2` |
+| `scikit-learn` | `0.24.2` |
 
 To check compatibility requirements for older versions of Seldon Core you can
 see the [compatibility table below](#version-compatibility).
@@ -42,7 +40,7 @@ spec:
   - graph:
       children: []
       implementation: SKLEARN_SERVER
-      modelUri: gs://seldon-models/sklearn/iris
+      modelUri: gs://seldon-models/v1.17.1/sklearn/iris
       name: classifier
     name: default
     replicas: 1
@@ -70,7 +68,7 @@ spec:
   - graph:
       children: []
       implementation: SKLEARN_SERVER
-      modelUri: gs://seldon-models/sklearn/iris
+      modelUri: gs://seldon-models/v1.17.1/sklearn/iris
       name: classifier
       parameters:
         - name: method
@@ -84,21 +82,14 @@ Acceptable values for the `method` parameter are `predict`, `predict_proba`,
 `decision_function`.
 
 
-## V2 KFServing protocol [Incubating]
+## V2 protocol
 
-.. Warning:: 
-  Support for the V2 KFServing protocol is still considered an incubating
-  feature.
-  This means that some parts of Seldon Core may still not be supported (e.g.
-  tracing, graphs, etc.).
-
-The SKLearn server can also be used to expose an API compatible with the [V2
-KFServing Protocol](../graph/protocols.md#v2-kfserving-protocol).
+The SKLearn server can also be used to expose an API compatible with the [V2 Protocol](../graph/protocols.md#v2-protocol).
 Note that, under the hood, it will use the [Seldon
 MLServer](https://github.com/SeldonIO/MLServer) runtime.
 
-In order to enable support for the V2 KFServing protocol, it's enough to
-specify the `protocol` of the `SeldonDeployment` to use `kfserving`.
+In order to enable support for the V2 protocol, it's enough to
+specify the `protocol` of the `SeldonDeployment` to use `v2`.
 For example,
 
 ```yaml
@@ -108,12 +99,12 @@ metadata:
   name: sklearn
 spec:
   name: iris-predict
-  protocol: kfserving # Activate the V2 protocol
+  protocol: v2 # Activate the V2 protocol
   predictors:
   - graph:
       children: []
       implementation: SKLEARN_SERVER
-      modelUri: gs://seldon-models/sklearn/iris
+      modelUri: gs://seldon-models/v1.17.1/sklearn/iris
       name: classifier
       parameters:
         - name: method
@@ -161,7 +152,7 @@ spec:
     graph:
       children: []
       implementation: SKLEARN_SERVER
-      modelUri: gs://seldon-models/sklearn/iris
+      modelUri: gs://seldon-models/v1.17.1/sklearn/iris
       name: classifier
     name: default
     replicas: 1
@@ -178,7 +169,7 @@ existing SKLearn server to build your own.
 In particular, you could extend the code in the
 [`servers/sklearnserver`](https://github.com/SeldonIO/seldon-core/tree/master/servers/sklearnserver)
 folder to build a custom image.
-This image used for the `SKLEARN_SERVER` implementation can then be overriden
+This image used for the `SKLEARN_SERVER` implementation can then be overridden
 in the `componentSpecs`.
 
 Note that you can also change the image used globally for the SKLearn server by

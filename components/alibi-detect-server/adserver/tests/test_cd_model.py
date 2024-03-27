@@ -35,7 +35,7 @@ class TestDummyCDModel(TestCase):
         res = ad_model.process_event(req, headers)
         self.assertEqual(res.data["data"]["is_drift"], 0)
         print(res.metrics)
-        self.assertEqual(len(res.metrics), 8)
+        self.assertEqual(len(res.metrics), 9)
 
     def test_batch(self):
         model = DummyCDModel()
@@ -49,7 +49,7 @@ class TestDummyCDModel(TestCase):
 
         res = ad_model.process_event(req, headers)
         self.assertEqual(res.data["data"]["is_drift"], 0)
-        self.assertEqual(len(res.metrics), 8)
+        self.assertEqual(len(res.metrics), 9)
 
         res = ad_model.process_event(req, headers)
         self.assertEqual(res, None)
@@ -60,7 +60,7 @@ class TestTextDriftModel(TestCase):
         model = DummyCDModel()
         ad_model = AlibiDetectConceptDriftModel(
             "imdb_text_drift",
-            "gs://seldon-models/alibi-detect/cd/ks/imdb-0_4_4",
+            "gs://seldon-models/alibi-detect/cd/ks/imdb-0_11_2",
             drift_batch_size=2,
         )
         req = [
@@ -70,4 +70,4 @@ class TestTextDriftModel(TestCase):
         ad_model.load()
         res = ad_model.process_event(req, headers)
         res = ad_model.process_event(req, headers)
-        self.assertEqual(res.data["data"]["is_drift"], 0)
+        self.assertEqual(res.data["data"]["is_drift"], 1)

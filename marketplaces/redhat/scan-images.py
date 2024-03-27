@@ -22,19 +22,17 @@ def run_command(args, debug=False):
 
 def scan_images(debug=False):
     paths = [
-    "operator",
-    "executor",
-    "engine",
-    "examples/models/mean_classifier",
-    "components/alibi-detect-server",
-    "components/seldon-request-logger",
-    "servers/sklearnserver",
-    "servers/mlflowserver",
-    "servers/xgboostserver",
-    "servers/tfserving_proxy",
-    "components/alibi-explain-server",
-    "components/storage-initializer",
-    "servers/tfserving",
+        "operator",
+        "executor",
+        "examples/models/mean_classifier",
+        "components/alibi-detect-server",
+        "servers/sklearnserver",
+        "servers/mlflowserver",
+        "servers/xgboostserver",
+        "servers/tfserving_proxy",
+        "components/alibi-explain-server",
+        "components/rclone-storage-initializer",
+        "servers/tfserving",
     ]
 
     for path in paths:

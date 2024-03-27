@@ -84,14 +84,14 @@ It's possible to define complex graphs with ROUTERS, COMBINERS, and other compon
 
 ## Learn about all types through GoLang Reference
 
-You can learn more about the SeldonDeployment YAML definition by reading the the content on our [Kubernetes Seldon Deployment GoLang Types file](../reference/seldon-deployment.rst).
+You can learn more about the SeldonDeployment YAML definition by reading the content on our [Kubernetes Seldon Deployment GoLang Types file](../reference/seldon-deployment.rst).
 
 
 ## Image UserIds
 
 We provide an environment variable DEFAULT_USER_ID (set in the helm chart install with `.Values.defaultUserID`) which allows you to set the default user id the images will run under. This defaults to 8888. If you wish to override this for your specific Pod/Container rather than globally you can change it as shown in the example below:
 
-```
+```yaml
 apiVersion: machinelearning.seldon.io/v1
 kind: SeldonDeployment
 metadata:

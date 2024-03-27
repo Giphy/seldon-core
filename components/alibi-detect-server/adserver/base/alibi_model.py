@@ -1,7 +1,10 @@
-import kfserving
-from typing import Optional
+from typing import Optional, Union
 from adserver.base.model import CEModel
-from alibi_detect.utils.saving import load_detector, Data
+from adserver.base.storage import download_model
+from alibi_detect.base import ConfigurableDetector, Detector
+from alibi_detect.utils.saving import load_detector
+
+Data = Union[Detector, ConfigurableDetector]
 
 
 class AlibiDetectModel(CEModel):  # pylint:disable=c-extension-no-member
@@ -27,6 +30,6 @@ class AlibiDetectModel(CEModel):  # pylint:disable=c-extension-no-member
         Load the model from storage
 
         """
-        model_folder = kfserving.Storage.download(self.storage_uri)
+        model_folder = download_model(self.storage_uri)
         self.model: Data = load_detector(model_folder)
         self.ready = True

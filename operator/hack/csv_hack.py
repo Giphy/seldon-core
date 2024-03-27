@@ -21,9 +21,27 @@ def remove_versions(csv):
 
 
 def update_container_image(csv, version):
+    # Update Operator Image
     csv["metadata"]["annotations"]["containerImage"] = (
-        "seldonio/seldon-core-operator:" + version
+        "docker.io/seldonio/seldon-core-operator:" + version
     )
+
+    csv["spec"]["install"]["spec"]["deployments"][0]["spec"]["template"]["spec"][
+        "containers"
+    ][0]["image"] = ("docker.io/seldonio/seldon-core-operator:" + version)
+
+    # Update Executor image
+    for n, env in enumerate(
+        csv["spec"]["install"]["spec"]["deployments"][0]["spec"]["template"]["spec"][
+            "containers"
+        ][0]["env"]
+    ):
+        if env["name"] == "EXECUTOR_CONTAINER_IMAGE_AND_VERSION":
+            csv["spec"]["install"]["spec"]["deployments"][0]["spec"]["template"]["spec"][
+                "containers"
+            ][0]["env"][n]["value"] = (
+                "docker.io/seldonio/seldon-core-executor:" + version
+            )
     return csv
 
 
@@ -38,7 +56,6 @@ def main(argv):
     print(opts)
     with open(opts.path, "r") as stream:
         csv = yaml.safe_load(stream)
-        csv = remove_versions(csv)
         csv = update_container_image(csv, opts.version)
         fdata = yaml.dump(csv, width=1000, default_flow_style=False, sort_keys=False)
         with open(opts.path, "w") as outfile:

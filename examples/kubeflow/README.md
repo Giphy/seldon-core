@@ -22,6 +22,7 @@ Make sure you have the following components set-up and running in your Kubernete
 
 * [Seldon Core installed](https://docs.seldon.io/projects/seldon-core/en/latest/workflow/install.html#install-seldon-core-with-helm) with an [ingress (Ambassador / Istio) set up](https://docs.seldon.io/projects/seldon-core/en/latest/workflow/install.html#ingress-support)
 * Kubeflow Pipelines [version 1.0.0 Standalone](https://www.kubeflow.org/docs/pipelines/installation/standalone-deployment/#deploying-kubeflow-pipelines) set up
+* [s2i](https://github.com/openshift/source-to-image#installation) installed on your machine
 
 Let's get started! 🚀🔥 We will be building the end-to-end pipeline below:
 
@@ -437,7 +438,7 @@ Now that I've changed it to a loadbalancer, it has allocated the external IP as 
     ambassador   LoadBalancer   10.97.236.196   localhost     80:30209/TCP   9m20s
 
 
-If this was successfull, you should be able to access the dashboard
+If this was successful, you should be able to access the dashboard
 ![](img/k-pipeline-dashboard.jpg)
 
 ### Define the pipeline
@@ -985,7 +986,7 @@ We can visualise the performance using the SeldonAnalytics package, which we can
 !helm install seldon-core-analytics --repo https://storage.googleapis.com/seldon-charts --namespace kubeflow
 ```
 
-In my case, similar to what I did with Ambassador, I need to make sure the the service is a LoadBalancer instead of a NodePort
+In my case, similar to what I did with Ambassador, I need to make sure the service is a LoadBalancer instead of a NodePort
 
 
 ```python

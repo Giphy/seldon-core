@@ -2,14 +2,17 @@ package main
 
 import (
 	"flag"
-	"github.com/prometheus/common/log"
+	"os"
+
 	"github.com/seldonio/seldon-core/executor/api"
 	"github.com/seldonio/seldon-core/executor/api/kafka"
 	"github.com/seldonio/seldon-core/executor/api/rest"
 	"github.com/seldonio/seldon-core/executor/k8s"
 	predictor2 "github.com/seldonio/seldon-core/executor/predictor"
-	"os"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	"go.uber.org/automaxprocs/maxprocs"
+	"log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
+	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 )
 
 var (
@@ -50,19 +53,26 @@ func main() {
 
 	predictor, err := predictor2.GetPredictor(*predictorName, *filename, *sdepName, *namespace, configPath)
 	if err != nil {
-		log.Error(err, "Failed to get predictor")
+		log.Fatal(err, "Failed to get predictor")
 		os.Exit(-1)
 	}
 
 	annotations, err := k8s.GetAnnotations()
 	if err != nil {
-		log.Error(err, "Failed to load annotations")
+		log.Fatal(err, "Failed to load annotations")
 	}
 
 	client, err := rest.NewJSONRestClient(*protocol, *sdepName, predictor, annotations)
 
-	logf.SetLogger(logf.ZapLogger(false))
+	logf.SetLogger(zap.New())
 	logger := logf.Log.WithName("entrypoint")
+
+	// Set runtime.GOMAXPROCS to respect container limits if the env var GOMAXPROCS is not set or is invalid, preventing CPU throttling.
+	undo, err := maxprocs.Set(maxprocs.Logger(logger.Info))
+	defer undo()
+	if err != nil {
+		logger.Error(err, "failed to set GOMAXPROCS")
+	}
 
 	kafkaProxy := kafka.NewKafkaProxy(client, *modelName, *predictorName, *sdepName, *namespace, *broker, *hostname, int32(*httpPort), logger)
 

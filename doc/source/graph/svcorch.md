@@ -17,7 +17,7 @@ At present, we support the following protocols:
 | --- | --- | --- | --- |
 | Seldon | `seldon` | [OpenAPI spec for Seldon](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/openapi.html) |
 | Tensorflow | `tensorflow` | [REST API](https://www.tensorflow.org/tfx/serving/api_rest) and [gRPC API](https://github.com/tensorflow/serving/blob/master/tensorflow_serving/apis/prediction_service.proto) reference |
-| KFServing | `kfserving` | [KFServing Dataplane reference](https://github.com/kubeflow/kfserving/tree/master/docs/predict-api/v2) |
+| V2 | `v2` | [V2 Protocol Reference](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/v2-protocol.html) |
 
 These protocols are supported by some of our pre-packaged servers out of the
 box.
@@ -200,16 +200,4 @@ spec:
     name: default
 ```
 
-
-## Java Engine [DEPRECATED]
-
-.. Attention:: 
-   The Java version of the service orchestrator has now been deprecated and
-   will be completely removed in future versions of Seldon Core.
-   We strongly suggest **migrating to the new version of the service
-   orchestrator** (implemented in Go) before upgrading.
-   Note that the new version of the service orchestator is enabled by default
-   since Seldon Core `1.1`.
-
-For further details on the Java engine see previous versions of this page in the docs.
 

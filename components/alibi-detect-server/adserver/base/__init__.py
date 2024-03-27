@@ -1,2 +1,2 @@
-from .model import CEModel
-from .alibi_model import AlibiDetectModel
+from .model import CEModel, ModelResponse
+from .alibi_model import AlibiDetectModel, Data

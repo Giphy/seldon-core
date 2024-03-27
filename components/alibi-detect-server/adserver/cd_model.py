@@ -1,14 +1,14 @@
 import json
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Union, cast
 import logging
 import numpy as np
+import os
 from .numpy_encoder import NumpyEncoder
-from alibi_detect.utils.saving import load_detector, Data
-from adserver.base import AlibiDetectModel
-from seldon_core.user_model import SeldonResponse
-import kfserving
-import tensorflow as tf
-from transformers import AutoTokenizer
+from adserver.base import AlibiDetectModel, ModelResponse, Data
+from alibi_detect.utils.saving import load_detector
+from adserver.constants import ENV_DRIFT_TYPE_FEATURE
+
+DRIFT_TYPE_FEATURE = os.environ.get(ENV_DRIFT_TYPE_FEATURE, "").upper() == "TRUE"
 
 
 def _append_drift_metrcs(metrics, drift, name):
@@ -20,6 +20,15 @@ def _append_drift_metrcs(metrics, drift, name):
             metric_found = [metric_found]
 
         for i, instance in enumerate(metric_found):
+            if name == "is_drift":
+                metrics.append(
+                    {
+                        "key": f"seldon_metric_drift_counter",
+                        "value": instance,
+                        "type": "COUNTER",
+                        "tags": {"index": str(i)},
+                    }
+                )
             metrics.append(
                 {
                     "key": f"seldon_metric_drift_{name}",
@@ -56,10 +65,12 @@ class AlibiDetectConceptDriftModel(
         """
         super().__init__(name, storage_uri, model)
         self.drift_batch_size = drift_batch_size
-        self.batch: np.array = None
+        self.batch: Optional[np.ndarray] = None
         self.model: Data = model
 
-    def process_event(self, inputs: List, headers: Dict) -> Optional[Dict]:
+    def process_event(
+        self, inputs: Union[List, Dict], headers: Dict
+    ) -> Optional[ModelResponse]:
         """
         Process the event and return Alibi Detect score
 
@@ -90,19 +101,25 @@ class AlibiDetectConceptDriftModel(
         else:
             self.batch = np.concatenate((self.batch, X))
 
+        self.batch = cast(np.ndarray, self.batch)
+
         if self.batch.shape[0] >= self.drift_batch_size:
             logging.info(
                 "Running drift detection. Batch size is %d. Needed %d",
                 self.batch.shape[0],
                 self.drift_batch_size,
             )
+            if DRIFT_TYPE_FEATURE:
+                cd_preds = self.model.predict(self.batch, drift_type="feature")
+            else:
+                cd_preds = self.model.predict(self.batch)
 
-            cd_preds = self.model.predict(self.batch)
+            logging.info("Ran drift test")
             self.batch = None
 
             output = json.loads(json.dumps(cd_preds, cls=NumpyEncoder))
 
-            metrics = []
+            metrics: List[Dict] = []
             drift = output.get("data")
 
             if drift:
@@ -111,9 +128,7 @@ class AlibiDetectConceptDriftModel(
                 _append_drift_metrcs(metrics, drift, "p_val")
                 _append_drift_metrcs(metrics, drift, "threshold")
 
-            seldon_response = SeldonResponse(output, None, metrics)
-
-            return seldon_response
+            return ModelResponse(data=output, metrics=metrics)
         else:
             logging.info(
                 "Not running drift detection. Batch size is %d. Need %d",

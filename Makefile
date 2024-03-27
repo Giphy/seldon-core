@@ -28,7 +28,7 @@ run_core_builder_in_host:
 			-v /var/run/docker.sock:/var/run/docker.sock \
 			-v $${HOME}/.m2:/root/.m2 \
 			-v $(SELDON_CORE_LOCAL_DIR):/work \
-			seldonio/core-builder:0.19 bash
+			seldonio/core-builder:0.20 bash
 
 
 run_core_builder_in_minikube:
@@ -37,7 +37,7 @@ run_core_builder_in_minikube:
 			-v /var/run/docker.sock:/var/run/docker.sock \
 			-v /home/docker/.m2:/root/.m2 \
 			-v $(SELDON_CORE_VM_DIR):/work \
-			seldonio/core-builder:0.19 bash
+			seldonio/core-builder:0.20 bash
 
 show_paths:
 	@echo "local: $(SELDON_CORE_LOCAL_DIR)"
@@ -58,3 +58,11 @@ run_python_builder:
 		--user=$$(id -u) \
 		-v $(SELDON_CORE_LOCAL_DIR):/work \
 		seldonio/python-builder:0.2 bash
+
+.PHONY: update-3rd-party-licenses
+update-3rd-party-licenses:
+	make -C executor licenses
+	make -C operator licenses
+	make -C python licenses
+	sed -i '1d' python/licenses/license_info.csv
+	cat executor/licenses/license_info.csv operator/licenses/license_info.csv python/licenses/license_info.csv | sed s/\"//g | cut -d, -f3 | sort | uniq -c > licenses/3rd-party-summary.txt

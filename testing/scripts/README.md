@@ -10,7 +10,7 @@ We use:
 
 [S2I](https://github.com/openshift/source-to-image) v1.1.14
 
-[Kustomize](https://github.com/kubernetes-sigs/kustomize/blob/master/docs/INSTALL.md) v3.2.3
+[Kustomize](https://github.com/kubernetes-sigs/kustomize/blob/master/site/content/en/docs/Getting%20started/installation.md) v3.2.3
 
 [Kubectl](https://kubernetes.io/docs/tasks/tools/install-kubectl/) v1.16.2
 
@@ -70,7 +70,7 @@ kubectl logs -f -n seldon-system $(kubectl get pods -n seldon-system -l app=seld
 
 ## Writing new tests
 
-### Invididual namespaces
+### Individual namespaces
 
 Each test should run on its own separate Kubernetes namespace.
 This allows for a cleaner environment as well as enables some of them

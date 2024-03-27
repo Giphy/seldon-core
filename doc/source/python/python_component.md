@@ -1,13 +1,13 @@
 # Seldon Python Component
 
-To create your component to run under Seldon you should create a class that implements the signatures needed for the type of component you are creating.
+In order to run a custom python model on Seldon Core, you first need to wrap the model in it's own Python Class.
 
 ## Model
 
 To wrap your machine learning model create a Class that has a predict method with the following signature:
 
 ```python
-    def predict(self, X: np.ndarray, names: Iterable[str], meta: Dict = None) -> Union[np.ndarray, List, str, bytes]:
+    def predict(self, X: Union[np.ndarray, List, str, bytes, Dict], names: Optional[List[str]], meta: Optional[Dict] = None) -> Union[np.ndarray, List, str, bytes, Dict]:
 ```
 
 Your predict method will receive a numpy array `X` with iterable set of column names (if they exist in the input features) and optional Dictionary of meta data. It should return the result of the prediction as either:
@@ -15,6 +15,7 @@ Your predict method will receive a numpy array `X` with iterable set of column n
 - Numpy array
 - List of values
 - String or Bytes
+- Dictionary
 
 A simple example is shown below:
 
@@ -53,16 +54,16 @@ You can also provide a method to return the column names for your prediction wit
 
 ### Examples
 
-You can follow [various notebook examples](../examples/notebooks.html).
+You can follow [various notebook examples](../examples/notebooks.html#python-language-wrapper-examples).
 
 ## Transformers
 
 Seldon Core allows you to create components to transform features either in the input request direction (input transformer) or the output response direction (output transformer). For these components create methods with the signatures below:
 
 ```python
-    def transform_input(self, X: np.ndarray, names: Iterable[str], meta: Dict = None) -> Union[np.ndarray, List, str, bytes]:
+    def transform_input(self, X: Union[np.ndarray, List, str, bytes, Dict], names: Optional[List[str]], meta: Optional[Dict] = None) -> Union[np.ndarray, List, str, bytes, Dict]:
 
-    def transform_output(self, X: np.ndarray, names: Iterable[str], meta: Dict = None) -> Union[np.ndarray, List, str, bytes]:
+    def transform_output(self, X: Union[np.ndarray, List, str, bytes, Dict], names: Optional[List[str]], meta: Optional[Dict] = None) -> Union[np.ndarray, List, str, bytes, Dict]:
 ```
 
 ## Combiners
@@ -70,7 +71,7 @@ Seldon Core allows you to create components to transform features either in the 
 Seldon Core allows you to create components that combine responses from multiple models into a single response. To create a class for this add a method with signature below:
 
 ```python
-    def aggregate(self, features_list: List[Union[np.ndarray, str, bytes]], feature_names_list: List) -> Union[np.ndarray, List, str, bytes]:
+    def aggregate(self, features_list: List[Union[np.ndarray, str, bytes]], feature_names_list: List) -> Union[np.ndarray, List, str, bytes, Dict]:
 ```
 
 A simple example that averages a set of responses is shown below:
@@ -127,7 +128,7 @@ class ModelWithMetrics(object):
 
 Note: prior to Seldon Core 1.1 custom metrics have always been returned to client. From SC 1.1 you can control this behaviour setting `INCLUDE_METRICS_IN_CLIENT_RESPONSE` environmental variable to either `true` or `false`. Despite value of this environmental variable custom metrics will always be exposed to Prometheus.
 
-Prior to Seldon Core 1.1.0 not implementing custom metrics logs a message at the info level at each predict call. Starting with Seldon Core 1.1.0 this is logged at the debug level. To supress this warning implement a metrics function returning an empty list:
+Prior to Seldon Core 1.1.0 not implementing custom metrics logs a message at the info level at each predict call. Starting with Seldon Core 1.1.0 this is logged at the debug level. To suppress this warning implement a metrics function returning an empty list:
 
 ```python
 def metrics(self):
@@ -150,7 +151,7 @@ class ModelWithTags(object):
     def predict(self,X,features_names):
         return X
 
-    def tags(self,X):
+    def tags(self):
         return {"system":"production"}
 ```
 
@@ -166,7 +167,7 @@ from seldon_core.user_model import SeldonResponse
 
 
 class Model:
-    def predict(self, features, names=[], meta={}):
+    def predict(self, X, names=[], meta={}):
         runtime_metrics = {"type": "COUNTER", "key": "instance_counter", "value": len(X)},
         runtime_tags = {"runtime": "tag", "shared": "right one"}
         return SeldonResponse(data=X, metrics=runtime_metrics, tags=runtime_tags)
@@ -262,18 +263,20 @@ spec:
             timeoutSeconds: 1
 ```
 
+However, note if `executor.fullHealthChecks` is set to `true` then the Seldon orchestrator will call your health status method to check the model is ready.
+
 ## Low level Methods
 
 If you want more control you can provide a low-level methods that will provide as input the raw proto buffer payloads. The signatures for these are shown below for release `seldon_core>=0.2.6.1`:
 
 ```python
-    def predict_raw(self, msg: prediction_pb2.SeldonMessage) -> prediction_pb2.SeldonMessage:
+    def predict_raw(self, msg: Union[Dict, prediction_pb2.SeldonMessage]) -> prediction_pb2.SeldonMessage:
 
     def send_feedback_raw(self, feedback: prediction_pb2.Feedback) -> prediction_pb2.SeldonMessage:
 
-    def transform_input_raw(self, msg: prediction_pb2.SeldonMessage) -> prediction_pb2.SeldonMessage:
+    def transform_input_raw(self, msg: Union[Dict, prediction_pb2.SeldonMessage]) -> prediction_pb2.SeldonMessage:
 
-    def transform_output_raw(self, msg: prediction_pb2.SeldonMessage) -> prediction_pb2.SeldonMessage:
+    def transform_output_raw(self, msg: Union[Dict, prediction_pb2.SeldonMessage]) -> prediction_pb2.SeldonMessage:
 
     def route_raw(self, msg: prediction_pb2.SeldonMessage) -> prediction_pb2.SeldonMessage:
 
@@ -360,7 +363,7 @@ class Model:
 
 ## Gunicorn and load
 
-If the wrapped python class is [served under Gunicorn](./python_server) then as
+If the wrapped python class is served under [Gunicorn](https://gunicorn.org/) then as
 part of initialization of each gunicorn worker a `load` method will be called
 on your class if it has it.
 You should use this method to load and initialise your model.
@@ -464,7 +467,7 @@ class Model:
 ```
 
 #### Validation
-Output of developer-defined `metadata` method will be validated to follow the [kfserving dataplane proposal](https://github.com/kubeflow/kfserving/blob/master/docs/predict-api/v2/required_api.md#model-metadata) protocol, see [this](https://github.com/SeldonIO/seldon-core/issues/1638) GitHub issue for details:
+Output of developer-defined `metadata` method will be validated to follow the [V2 dataplane proposal](https://docs.seldon.io/projects/seldon-core/en/latest/reference/apis/v2-protocol.html) protocol, see [this](https://github.com/SeldonIO/seldon-core/issues/1638) GitHub issue for details:
 ```javascript
 $metadata_model_response =
 {

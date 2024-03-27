@@ -20,13 +20,13 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	logf "sigs.k8s.io/controller-runtime/pkg/runtime/log"
+	logf "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 )
 
 var (
 	// log is for logging in this package.
-	seldondeploymentlog = logf.Log.WithName("seldondeployment")
+	seldondeploymentLog = logf.Log.WithName("seldondeployment")
 	C                   client.Client
 )
 
@@ -38,25 +38,25 @@ func (r *SeldonDeployment) SetupWebhookWithManager(mgr ctrl.Manager) error {
 }
 
 // TODO(user): change verbs to "verbs=create;update;delete" if you want to enable deletion validation.
-// +kubebuilder:webhook:webhookVersions=v1beta1,verbs=create;update,path=/validate-machinelearning-seldon-io-v1alpha3-seldondeployment,mutating=false,failurePolicy=fail,sideEffects=None,groups=machinelearning.seldon.io,resources=seldondeployments,versions=v1alpha3,name=v1alpha3.vseldondeployment.kb.io
+// REMOVE+kubebuilder:webhook:webhookVersions=v1,verbs=create;update,path=/validate-machinelearning-seldon-io-v1-seldondeployment,mutating=false,matchPolicy=exact,failurePolicy=fail,sideEffects=None,admissionReviewVersions=v1;v1beta1,groups=machinelearning.seldon.io,resources=seldondeployments,versions=v1alpha3,name=v1.vseldondeployment.kb.io
 
 var _ webhook.Validator = &SeldonDeployment{}
 
 // ValidateCreate implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateCreate() error {
-	seldondeploymentlog.Info("Validating v1alpha3 Webhook called for CREATE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1alpha3 Webhook called for CREATE", "name", r.Name)
 	return r.Spec.ValidateSeldonDeployment()
 }
 
 // ValidateUpdate implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateUpdate(old runtime.Object) error {
-	seldondeploymentlog.Info("Validating v1alpha3 webhook called for UPDATE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1alpha3 webhook called for UPDATE", "name", r.Name)
 	return r.Spec.ValidateSeldonDeployment()
 }
 
 // ValidateDelete implements webhook.Validator so a webhook will be registered for the type
 func (r *SeldonDeployment) ValidateDelete() error {
-	seldondeploymentlog.Info("Validating v1alpha3 webhook called for DELETE", "name", r.Name)
+	seldondeploymentLog.Info("Validating v1alpha3 webhook called for DELETE", "name", r.Name)
 
 	// TODO(user): fill in your validation logic upon object deletion.
 	return nil

@@ -19,13 +19,16 @@ package v1
 import (
 	"crypto/md5"
 	"encoding/hex"
+	"os"
 	"strconv"
+	"strings"
 
 	"k8s.io/apimachinery/pkg/types"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	"github.com/seldonio/seldon-core/operator/constants"
-	autoscalingv2beta2 "k8s.io/api/autoscaling/v2beta1"
+	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	autoscalingv2beta1 "k8s.io/api/autoscaling/v2beta1"
 	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -43,9 +46,7 @@ const (
 	Label_model              = "seldon.io/model"
 	Label_transformer        = "seldon.io/transformer"
 	Label_output_transformer = "seldon.io/output-transformer"
-	Label_default            = "seldon.io/default"
 	Label_shadow             = "seldon.io/shadow"
-	Label_canary             = "seldon.io/canary"
 	Label_explainer          = "seldon.io/explainer"
 	Label_managed_by         = "app.kubernetes.io/managed-by"
 	Label_value_seldon       = "seldon-core"
@@ -67,16 +68,26 @@ const (
 	ENV_PREDICTOR_LABELS                     = "PREDICTOR_LABELS"
 	ENV_SELDON_DEPLOYMENT_ID                 = "SELDON_DEPLOYMENT_ID"
 	ENV_SELDON_EXECUTOR_ENABLED              = "SELDON_EXECUTOR_ENABLED"
+	ENV_DEPLOYMENT_NAME_AS_PREFIX            = "DEPLOYMENT_NAME_AS_PREFIX"
 
-	ANNOTATION_JAVA_OPTS       = "seldon.io/engine-java-opts"
-	ANNOTATION_SEPARATE_ENGINE = "seldon.io/engine-separate-pod"
-	ANNOTATION_HEADLESS_SVC    = "seldon.io/headless-svc"
-	ANNOTATION_NO_ENGINE       = "seldon.io/no-engine"
-	ANNOTATION_CUSTOM_SVC_NAME = "seldon.io/svc-name"
-	ANNOTATION_EXECUTOR        = "seldon.io/executor"
+	ANNOTATION_SEPARATE_ENGINE         = "seldon.io/engine-separate-pod"
+	ANNOTATION_HEADLESS_SVC            = "seldon.io/headless-svc"
+	ANNOTATION_NO_ENGINE               = "seldon.io/no-engine"
+	ANNOTATION_NO_STOARGE_INITIALIZER  = "seldon.io/no-storage-initializer"
+	ANNOTATION_CUSTOM_SVC_NAME         = "seldon.io/svc-name"
+	ANNOTATION_LOGGER_WORK_QUEUE_SIZE  = "seldon.io/executor-logger-queue-size"
+	ANNOTATION_LOGGER_WRITE_TIMEOUT_MS = "seldon.io/executor-logger-write-timeout-ms"
 
 	DeploymentNamePrefix = "seldon"
 )
+
+var (
+	envDeploymentNameAsPrefix = os.Getenv(ENV_DEPLOYMENT_NAME_AS_PREFIX)
+)
+
+func HasSeparateEnginePod(spec SeldonDeploymentSpec) bool {
+	return strings.ToLower(spec.Annotations[ANNOTATION_SEPARATE_ENGINE]) == "true"
+}
 
 func hash(text string) string {
 	hasher := md5.New()
@@ -122,7 +133,13 @@ func GetDeploymentName(mlDep *SeldonDeployment, predictorSpec PredictorSpec, pod
 		name = baseName + getContainerNames(podSpec.Spec.Containers)
 	}
 	if len(name) > 63 {
-		return DeploymentNamePrefix + "-" + hash(name)
+		if envDeploymentNameAsPrefix == "true" {
+			possibleName := mlDep.Name + "-" + hash(name)
+			if len(possibleName) <= 63 { // Check that the created name is still less than k8s limit
+				return possibleName
+			}
+		}
+		return DeploymentNamePrefix + "-" + hash(name) // default name we know will be ok
 	} else {
 		return name
 	}
@@ -216,7 +233,7 @@ type SeldonDeploymentSpec struct {
 	Protocol    Protocol          `json:"protocol,omitempty" protobuf:"bytes,6,opt,name=protocol"`
 	Transport   Transport         `json:"transport,omitempty" protobuf:"bytes,7,opt,name=transport"`
 	Replicas    *int32            `json:"replicas,omitempty" protobuf:"bytes,8,opt,name=replicas"`
-	ServerType  ServerType        `json:"serverType,omitempty" protobuf:"bytes,8,opt,name=serverType"`
+	ServerType  ServerType        `json:"serverType,omitempty" protobuf:"bytes,9,opt,name=serverType"`
 }
 
 type SSL struct {
@@ -224,18 +241,19 @@ type SSL struct {
 }
 
 type PredictorSpec struct {
-	Name            string                  `json:"name" protobuf:"string,1,opt,name=name"`
-	Graph           PredictiveUnit          `json:"graph" protobuf:"bytes,2,opt,name=predictiveUnit"`
-	ComponentSpecs  []*SeldonPodSpec        `json:"componentSpecs,omitempty" protobuf:"bytes,3,opt,name=componentSpecs"`
-	Replicas        *int32                  `json:"replicas,omitempty" protobuf:"string,4,opt,name=replicas"`
-	Annotations     map[string]string       `json:"annotations,omitempty" protobuf:"bytes,5,opt,name=annotations"`
-	EngineResources v1.ResourceRequirements `json:"engineResources,omitempty" protobuf:"bytes,6,opt,name=engineResources"`
-	Labels          map[string]string       `json:"labels,omitempty" protobuf:"bytes,7,opt,name=labels"`
-	SvcOrchSpec     SvcOrchSpec             `json:"svcOrchSpec,omitempty" protobuf:"bytes,8,opt,name=svcOrchSpec"`
-	Traffic         int32                   `json:"traffic,omitempty" protobuf:"bytes,9,opt,name=traffic"`
-	Explainer       *Explainer              `json:"explainer,omitempty" protobuf:"bytes,10,opt,name=explainer"`
-	Shadow          bool                    `json:"shadow,omitempty" protobuf:"bytes,11,opt,name=shadow"`
-	SSL             *SSL                    `json:"ssl,omitempty" protobuf:"bytes,11,opt,name=ssl"`
+	Name                    string                  `json:"name" protobuf:"string,1,opt,name=name"`
+	Graph                   PredictiveUnit          `json:"graph" protobuf:"bytes,2,opt,name=predictiveUnit"`
+	ComponentSpecs          []*SeldonPodSpec        `json:"componentSpecs,omitempty" protobuf:"bytes,3,opt,name=componentSpecs"`
+	Replicas                *int32                  `json:"replicas,omitempty" protobuf:"string,4,opt,name=replicas"`
+	Annotations             map[string]string       `json:"annotations,omitempty" protobuf:"bytes,5,opt,name=annotations"`
+	EngineResources         v1.ResourceRequirements `json:"engineResources,omitempty" protobuf:"bytes,6,opt,name=engineResources"`
+	Labels                  map[string]string       `json:"labels,omitempty" protobuf:"bytes,7,opt,name=labels"`
+	SvcOrchSpec             SvcOrchSpec             `json:"svcOrchSpec,omitempty" protobuf:"bytes,8,opt,name=svcOrchSpec"`
+	Traffic                 int32                   `json:"traffic,omitempty" protobuf:"bytes,9,opt,name=traffic"`
+	Explainer               *Explainer              `json:"explainer,omitempty" protobuf:"bytes,10,opt,name=explainer"`
+	Shadow                  bool                    `json:"shadow,omitempty" protobuf:"bytes,11,opt,name=shadow"`
+	SSL                     *SSL                    `json:"ssl,omitempty" protobuf:"bytes,12,opt,name=ssl"`
+	ProgressDeadlineSeconds *int32                  `json:"progressDeadlineSeconds,omitempty" protobuf:"bytes,13,opt,name=progressDeadlineSeconds"`
 }
 
 type Protocol string
@@ -243,7 +261,8 @@ type Protocol string
 const (
 	ProtocolSeldon     Protocol = "seldon"
 	ProtocolTensorflow Protocol = "tensorflow"
-	ProtocolKfserving  Protocol = "kfserving"
+	ProtocolKFServing  Protocol = "kfserving"
+	ProtocolV2         Protocol = "v2"
 )
 
 type Transport string
@@ -289,6 +308,8 @@ type Explainer struct {
 	Endpoint                *Endpoint          `json:"endpoint,omitempty" protobuf:"bytes,6,opt,name=endpoint"`
 	EnvSecretRefName        string             `json:"envSecretRefName,omitempty" protobuf:"bytes,7,opt,name=envSecretRefName"`
 	StorageInitializerImage string             `json:"storageInitializerImage,omitempty" protobuf:"bytes,8,opt,name=storageInitializerImage"`
+	Replicas                *int32             `json:"replicas,omitempty" protobuf:"string,9,opt,name=replicas"`
+	InitParameters          string             `json:"initParameters,omitempty" protobuf:"string,10,opt,name=initParameters"`
 }
 
 // ObjectMeta is a copy of the "k8s.io/apimachinery/pkg/apis/meta/v1" ObjectMeta.
@@ -483,12 +504,17 @@ type SeldonScaledObjectSpec struct {
 	// +optional
 	Advanced *kedav1alpha1.AdvancedConfig `json:"advanced,omitempty" protobuf:"bytes,5,opt,name=advanced"`
 	Triggers []kedav1alpha1.ScaleTriggers `json:"triggers" protobuf:"bytes,6,opt,name=triggers"`
+	// +optional
+	IdleReplicaCount *int32 `json:"idleReplicaCount,omitempty" protobuf:"bytes,7,opt,name=idleReplicaCount"`
+	// +optional
+	Fallback *kedav1alpha1.Fallback `json:"fallback,omitempty" protobuf:"bytes,8,opt,name=fallback"`
 }
 
 type SeldonHpaSpec struct {
 	MinReplicas *int32                          `json:"minReplicas,omitempty" protobuf:"int,1,opt,name=minReplicas"`
 	MaxReplicas int32                           `json:"maxReplicas" protobuf:"int,2,opt,name=maxReplicas"`
-	Metrics     []autoscalingv2beta2.MetricSpec `json:"metrics,omitempty" protobuf:"bytes,3,opt,name=metrics"`
+	Metrics     []autoscalingv2beta1.MetricSpec `json:"metrics,omitempty" protobuf:"bytes,3,opt,name=metrics"`
+	Metricsv2   []autoscalingv2.MetricSpec      `json:"metricsv2,omitempty" protobuf:"bytes,4,opt,name=metricsv2"`
 }
 
 type SeldonPdbSpec struct {
@@ -582,8 +608,7 @@ type PredictiveUnit struct {
 	ServiceAccountName      string                        `json:"serviceAccountName,omitempty" protobuf:"bytes,9,opt,name=serviceAccountName"`
 	EnvSecretRefName        string                        `json:"envSecretRefName,omitempty" protobuf:"bytes,10,opt,name=envSecretRefName"`
 	StorageInitializerImage string                        `json:"storageInitializerImage,omitempty" protobuf:"bytes,11,opt,name=storageInitializerImage"`
-	// Request/response  payload logging. v2alpha1 feature that is added to v1 for backwards compatibility while v1 is the storage version.
-	Logger *Logger `json:"logger,omitempty"`
+	Logger                  *Logger                       `json:"logger,omitempty" protobuf:"bytes,12,opt,name=logger"`
 }
 
 type LoggerMode string
@@ -602,47 +627,6 @@ type Logger struct {
 	Url *string `json:"url,omitempty"`
 	// What payloads to log
 	Mode LoggerMode `json:"mode,omitempty"`
-}
-
-type DeploymentStatus struct {
-	Name              string `json:"name,omitempty" protobuf:"string,1,opt,name=name"`
-	Status            string `json:"status,omitempty" protobuf:"string,2,opt,name=status"`
-	Description       string `json:"description,omitempty" protobuf:"string,3,opt,name=description"`
-	Replicas          int32  `json:"replicas,omitempty" protobuf:"string,4,opt,name=replicas"`
-	AvailableReplicas int32  `json:"availableReplicas,omitempty" protobuf:"string,5,opt,name=availableRelicas"`
-	ExplainerFor      string `json:"explainerFor,omitempty" protobuf:"string,6,opt,name=explainerFor"`
-}
-
-type ServiceStatus struct {
-	SvcName      string `json:"svcName,omitempty" protobuf:"string,1,opt,name=svcName"`
-	HttpEndpoint string `json:"httpEndpoint,omitempty" protobuf:"string,2,opt,name=httpEndpoint"`
-	GrpcEndpoint string `json:"grpcEndpoint,omitempty" protobuf:"string,3,opt,name=grpcEndpoint"`
-	ExplainerFor string `json:"explainerFor,omitempty" protobuf:"string,4,opt,name=explainerFor"`
-}
-
-type StatusState string
-
-// CRD Status values
-const (
-	StatusStateAvailable StatusState = "Available"
-	StatusStateCreating  StatusState = "Creating"
-	StatusStateFailed    StatusState = "Failed"
-)
-
-// Addressable placeholder until duckv1 issue is fixed:
-//    https://github.com/kubernetes-sigs/controller-tools/issues/391
-type SeldonAddressable struct {
-	URL string `json:"url,omitempty"`
-}
-
-// SeldonDeploymentStatus defines the observed state of SeldonDeployment
-type SeldonDeploymentStatus struct {
-	State            StatusState                 `json:"state,omitempty" protobuf:"string,1,opt,name=state"`
-	Description      string                      `json:"description,omitempty" protobuf:"string,2,opt,name=description"`
-	DeploymentStatus map[string]DeploymentStatus `json:"deploymentStatus,omitempty" protobuf:"bytes,3,opt,name=deploymentStatus"`
-	ServiceStatus    map[string]ServiceStatus    `json:"serviceStatus,omitempty" protobuf:"bytes,4,opt,name=serviceStatus"`
-	Replicas         int32                       `json:"replicas,omitempty" protobuf:"string,5,opt,name=replicas"`
-	Address          *SeldonAddressable          `json:"address,omitempty"`
 }
 
 // +genclient

@@ -19,11 +19,14 @@ package controllers
 import (
 	"context"
 	"fmt"
+	autoscaling "k8s.io/api/autoscaling/v2"
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
-	kedav1alpha1 "github.com/kedacore/keda/api/v1alpha1"
+	v2 "github.com/emissary-ingress/emissary/v3/pkg/api/getambassador.io/v2"
+	kedav1alpha1 "github.com/kedacore/keda/v2/apis/keda/v1alpha1"
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/gomega"
 	machinelearningv1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
@@ -83,7 +86,7 @@ var configs = map[string]string{
               "image": "seldonio/sklearnserver",
               "defaultImageVersion": "1.3.0-dev"
               },
-            "kfserving": {
+            "v2": {
               "image": "seldonio/mlserver",
               "defaultImageVersion": "0.1.0"
               }
@@ -95,7 +98,7 @@ var configs = map[string]string{
               "image": "seldonio/xgboostserver",
               "defaultImageVersion": "1.3.0-dev"
               },
-            "kfserving": {
+            "v2": {
               "image": "seldonio/mlserver",
               "defaultImageVersion": "0.1.0"
               }
@@ -107,7 +110,7 @@ var configs = map[string]string{
               "image": "seldonio/mlflowserver",
               "defaultImageVersion": "1.3.0-dev"
               },
-            "kfserving": {
+            "v2": {
               "image": "seldonio/mlserver",
               "defaultImageVersion": "0.1.0"
               }
@@ -115,16 +118,16 @@ var configs = map[string]string{
         },
         "TRITON_SERVER": {
           "protocols" : {
-            "kfserving": {
+            "v2": {
               "image": "nvcr.io/nvidia/tritonserver",
-              "defaultImageVersion": "20.08-py3"
+              "defaultImageVersion": "21.08-py3"
               }
             }
         }
      }`,
 	"storageInitializer": `
 	{
-	"image" : "gcr.io/kfserving/storage-initializer:v0.4.0",
+	"image" : "seldonio/rclone-storage-initializer:1.16.0",
 	"memoryRequest": "100Mi",
 	"memoryLimit": "1Gi",
 	"cpuRequest": "100m",
@@ -132,7 +135,8 @@ var configs = map[string]string{
 	}`,
 	"explainer": `
 	{
-	"image" : "seldonio/alibiexplainer:1.2.0"
+	"image" : "seldonio/alibiexplainer:1.2.0",
+	"image_v2" : "seldonio/mlserver:0.6.0"
 	}`,
 }
 
@@ -151,14 +155,12 @@ var _ = JustBeforeEach(func() {
 	envUseExecutor = "true"
 	envExecutorImage = "a"
 	envExecutorImageRelated = "b"
-	envEngineImage = "c"
-	envEngineImageRelated = "d"
 	envDefaultUser = ""
 	envExplainerImage = ""
 })
 
 var _ = BeforeSuite(func(done Done) {
-	logf.SetLogger(zap.LoggerTo(GinkgoWriter, true))
+	logf.SetLogger(zap.New(zap.WriteTo(GinkgoWriter), zap.UseDevMode(true)))
 
 	By("bootstrapping test environment")
 
@@ -175,6 +177,7 @@ var _ = BeforeSuite(func(done Done) {
 	cfg, err = testEnv.Start()
 	Expect(err).ToNot(HaveOccurred())
 	Expect(cfg).ToNot(BeNil())
+	cfg.Timeout = time.Second * 10
 
 	clientset, err = kubernetes.NewForConfig(cfg)
 	Expect(err).NotTo(HaveOccurred())
@@ -206,6 +209,12 @@ var _ = BeforeSuite(func(done Done) {
 	err = kedav1alpha1.AddToScheme(scheme)
 	Expect(err).NotTo(HaveOccurred())
 
+	err = v2.AddToScheme(scheme)
+	Expect(err).NotTo(HaveOccurred())
+
+	err = autoscaling.AddToScheme(scheme)
+	Expect(err).NotTo(HaveOccurred())
+
 	// +kubebuilder:scaffold:scheme
 
 	k8sManager, err = ctrl.NewManager(cfg, ctrl.Options{
@@ -220,7 +229,7 @@ var _ = BeforeSuite(func(done Done) {
 		Log:       ctrl.Log.WithName("controllers").WithName("SeldonDeployment"),
 		Scheme:    k8sManager.GetScheme(),
 		Recorder:  k8sManager.GetEventRecorderFor(constants.ControllerName),
-	}).SetupWithManager(context.TODO(), k8sManager, constants.ControllerName)
+	}).SetupWithManager(context.Background(), k8sManager, constants.ControllerName)
 	Expect(err).ToNot(HaveOccurred())
 
 	//k8sClient, err = client.New(cfg, client.Options{Scheme: scheme.Scheme})

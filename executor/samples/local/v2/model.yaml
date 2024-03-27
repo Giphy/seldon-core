@@ -1,0 +1,22 @@
+apiVersion: machinelearning.seldon.io/v1alpha2
+kind: SeldonDeployment
+metadata:
+  name: triton
+spec:
+  protocol: v2
+  predictors:
+  - graph:
+      children: []
+      endpoint:
+        service_host: 0.0.0.0
+        httpPort: 9000
+        grpcPort: 5001
+      implementation: TRITON_SERVER
+      modelUri: gs://seldon-models/trtis/simple-model
+      name: simple
+      type: MODEL
+      logger:
+        mode: all
+        url: http://localhost:2222
+    name: simple
+    replicas: 1

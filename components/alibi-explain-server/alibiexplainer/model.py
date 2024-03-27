@@ -1,8 +1,8 @@
-from typing import Dict
 from abc import ABC, abstractmethod
+from typing import Dict
+
 
 class ExplainerModel(ABC):
-
     def __init__(self, name: str):
         self.name = name
         self.ready = False
@@ -12,4 +12,4 @@ class ExplainerModel(ABC):
 
     @abstractmethod
     def explain(self, request: Dict) -> Dict:
-       pass
+        """Explain method"""

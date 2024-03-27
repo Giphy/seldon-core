@@ -1,32 +1,40 @@
 package logger
 
 import (
+	"os"
+
 	"github.com/go-logr/logr"
 )
 
-var WorkerQueue chan chan LogRequest
+const (
+	ENV_LOGGER_KAFKA_BROKER = "LOGGER_KAFKA_BROKER"
+	ENV_LOGGER_KAFKA_TOPIC  = "LOGGER_KAFKA_TOPIC"
+)
 
-func StartDispatcher(nworkers int, log logr.Logger, sdepName string, namespace string, predictorName string) {
-	// First, initialize the channel we are going to put the workers' work channels into.
-	WorkerQueue = make(chan chan LogRequest, nworkers)
+func StartDispatcher(nworkers int, logBufferSize int, writeTimeoutMs int, log logr.Logger, sdepName string, namespace string, predictorName string, kafkaBroker string, kafkaTopic string, protocol string) error {
+	if kafkaBroker == "" {
+		kafkaBroker = os.Getenv(ENV_LOGGER_KAFKA_BROKER)
+	}
+	if kafkaBroker != "" {
+		if kafkaTopic == "" {
+			kafkaTopic = os.Getenv(ENV_LOGGER_KAFKA_TOPIC)
+		}
+		if kafkaTopic == "" {
+			kafkaTopic = "seldon"
+		}
+	}
 
+	workQueue = make(chan LogRequest, logBufferSize)
+	writeTimeoutMilliseconds = writeTimeoutMs
 	// Now, create all of our workers.
 	for i := 0; i < nworkers; i++ {
 		log.Info("Starting", "worker", i+1)
-		worker := NewWorker(i+1, WorkerQueue, log, sdepName, namespace, predictorName)
+		worker, err := NewWorker(i+1, workQueue, log, sdepName, namespace, predictorName, kafkaBroker, kafkaTopic, protocol)
+		if err != nil {
+			return err
+		}
 		worker.Start()
 	}
 
-	go func() {
-		for {
-			select {
-			case work := <-WorkQueue:
-				go func() {
-					worker := <-WorkerQueue
-
-					worker <- work
-				}()
-			}
-		}
-	}()
+	return nil
 }

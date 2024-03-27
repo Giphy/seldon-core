@@ -1,10 +1,15 @@
 import argparse
 
 import tensorflow as tf
-from enum import Enum
-import os
+
+gpus = tf.config.experimental.list_physical_devices("GPU")
+for gpu in gpus:
+    tf.config.experimental.set_memory_growth(gpu, True)
 
 tf.keras.backend.clear_session()
+
+from enum import Enum
+import os
 import logging
 from adserver.cm_model import CustomMetricsModel
 from adserver.od_model import AlibiDetectOutlierModel
@@ -13,7 +18,7 @@ from adserver.cd_model import AlibiDetectConceptDriftModel
 from adserver.server import CEServer
 from adserver.protocols import Protocol
 from adserver.server import DEFAULT_HTTP_PORT
-from alibi_detect.utils.saving import Data
+from adserver.base import Data
 
 
 class AlibiDetectMethod(Enum):

@@ -2,8 +2,11 @@ package controllers
 
 import (
 	"fmt"
+
 	machinelearningv1 "github.com/seldonio/seldon-core/operator/apis/machinelearning.seldon.io/v1"
+	"github.com/seldonio/seldon-core/operator/constants"
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 
 	. "github.com/onsi/ginkgo"
 	. "github.com/onsi/ginkgo/extensions/table"
@@ -33,15 +36,17 @@ var _ = Describe("MLServer helpers", func() {
 	Describe("mergeMLServerContainer", func() {
 		var existing *v1.Container
 		var mlServer *v1.Container
+		customEnvValue := "{\"custom\":1}"
 
 		BeforeEach(func() {
 			existing = &v1.Container{
 				Env: []v1.EnvVar{
 					{Name: "FOO", Value: "BAR"},
+					{Name: MLServerTempoRuntimeEnv, Value: customEnvValue},
 				},
 			}
 
-			mlServer, _ = getMLServerContainer(pu)
+			mlServer, _ = getMLServerContainer(pu, "default")
 		})
 
 		It("should merge containers adding extra env", func() {
@@ -49,8 +54,48 @@ var _ = Describe("MLServer helpers", func() {
 
 			Expect(merged).ToNot(BeNil())
 			Expect(merged.Env).To(ContainElement(v1.EnvVar{Name: "FOO", Value: "BAR"}))
+			Expect(merged.Env).To(ContainElement(v1.EnvVar{Name: MLServerTempoRuntimeEnv, Value: customEnvValue}))
 			Expect(merged.Env).To(ContainElements(mlServer.Env))
 			Expect(merged.Image).To(Equal(mlServer.Image))
+		})
+
+		It("should set probes to default if not present", func() {
+			merged := mergeMLServerContainer(existing, mlServer)
+
+			Expect(merged).ToNot(BeNil())
+			Expect(merged.ReadinessProbe).ToNot(BeNil())
+			Expect(merged.ReadinessProbe.ProbeHandler.HTTPGet).ToNot(BeNil())
+			Expect(merged.ReadinessProbe.ProbeHandler.HTTPGet.Path).To(Equal(constants.KFServingProbeReadyPath))
+			Expect(merged.LivenessProbe).ToNot(BeNil())
+			Expect(merged.LivenessProbe.ProbeHandler.HTTPGet).ToNot(BeNil())
+			Expect(merged.LivenessProbe.ProbeHandler.HTTPGet.Path).To(Equal(constants.KFServingProbeLivePath))
+		})
+
+		It("should override only path if probes present", func() {
+			existing.ReadinessProbe = &v1.Probe{
+				ProbeHandler: v1.ProbeHandler{
+					TCPSocket: &v1.TCPSocketAction{Port: intstr.FromString("http")},
+				},
+				InitialDelaySeconds: 66,
+			}
+			existing.LivenessProbe = &v1.Probe{
+				ProbeHandler: v1.ProbeHandler{
+					TCPSocket: &v1.TCPSocketAction{Port: intstr.FromString("http")},
+				},
+				InitialDelaySeconds: 67,
+			}
+
+			merged := mergeMLServerContainer(existing, mlServer)
+
+			Expect(merged).ToNot(BeNil())
+			Expect(merged.ReadinessProbe).ToNot(BeNil())
+			Expect(merged.ReadinessProbe.ProbeHandler.HTTPGet).ToNot(BeNil())
+			Expect(merged.ReadinessProbe.ProbeHandler.HTTPGet.Path).To(Equal(constants.KFServingProbeReadyPath))
+			Expect(merged.ReadinessProbe.InitialDelaySeconds).To(Equal(int32(66)))
+			Expect(merged.LivenessProbe).ToNot(BeNil())
+			Expect(merged.LivenessProbe.ProbeHandler.HTTPGet).ToNot(BeNil())
+			Expect(merged.LivenessProbe.ProbeHandler.HTTPGet.Path).To(Equal(constants.KFServingProbeLivePath))
+			Expect(merged.LivenessProbe.InitialDelaySeconds).To(Equal(int32(67)))
 		})
 	})
 
@@ -58,7 +103,7 @@ var _ = Describe("MLServer helpers", func() {
 		var cServer *v1.Container
 
 		BeforeEach(func() {
-			cServer, _ = getMLServerContainer(pu)
+			cServer, _ = getMLServerContainer(pu, "default")
 		})
 
 		It("creates container with image", func() {
@@ -91,7 +136,7 @@ var _ = Describe("MLServer helpers", func() {
 		var envs []v1.EnvVar
 
 		BeforeEach(func() {
-			envs, _ = getMLServerEnvVars(pu)
+			envs, _ = getMLServerEnvVars(pu, "default")
 		})
 
 		It("adds the right ports", func() {
@@ -148,17 +193,57 @@ var _ = Describe("MLServer helpers", func() {
 
 				mlServerImplementation, err := getMLServerModelImplementation(pu)
 
-				if expected == "" {
-					Expect(err).To(HaveOccurred())
-					Expect(mlServerImplementation).To(Equal(expected))
-				} else {
-					Expect(err).To(Not(HaveOccurred()))
-					Expect(mlServerImplementation).To(Equal(expected))
-				}
+				Expect(err).To(Not(HaveOccurred()))
+				Expect(mlServerImplementation).To(Equal(expected))
 			},
 			Entry("sklearn", machinelearningv1.PrepackSklearnName, MLServerSKLearnImplementation),
-			Entry("xgboost", machinelearningv1.PrepackXgboostName, MLServerXGBoostImplementation),
+			Entry("xgboost", machinelearningv1.PrepackXGBoostName, MLServerXGBoostImplementation),
+			Entry("tempo", machinelearningv1.PrepackTempoName, MLServerTempoImplementation),
+			Entry("mlserver", machinelearningv1.PrepackMLFlowName, MLServerMLFlowImplementation),
 			Entry("unknown", "foo", ""),
+		)
+	})
+})
+
+var _ = Describe("MLServer explain helpers", func() {
+	Describe("getAlibiExplainExtraEnvVars", func() {
+		DescribeTable(
+			"returns the right extra envs",
+			func(explainerType machinelearningv1.AlibiExplainerType, pSvcEndpoint string, graphName string, initParameters string, expected string) {
+
+				extraEnvs, _ := getAlibiExplainExtraEnvVars(explainerType, pSvcEndpoint, graphName, initParameters)
+				Expect(extraEnvs).To(Equal(expected))
+			},
+			Entry("anchor text", machinelearningv1.AlibiAnchorsTabularExplainer, "url", "p", "", "{\"explainer_type\":\"anchor_tabular\",\"infer_uri\":\"http://url/v2/models/p/infer\"}"),
+			Entry("anchor image", machinelearningv1.AlibiAnchorsImageExplainer, "url", "p", "", "{\"explainer_type\":\"anchor_image\",\"infer_uri\":\"http://url/v2/models/p/infer\"}"),
+			Entry("anchor text with empty init", machinelearningv1.AlibiAnchorsTabularExplainer, "url", "p", "{}", "{\"explainer_type\":\"anchor_tabular\",\"infer_uri\":\"http://url/v2/models/p/infer\",\"init_parameters\":{}}"),
+			Entry("anchor text with init", machinelearningv1.AlibiAnchorsTabularExplainer, "url", "p", "{\"v\":2}", "{\"explainer_type\":\"anchor_tabular\",\"infer_uri\":\"http://url/v2/models/p/infer\",\"init_parameters\":{\"v\":2}}"),
+		)
+	})
+
+	Describe("getAlibiExplainExplainerTypeTag", func() {
+		DescribeTable(
+			"returns the right explainer tag",
+			func(explainerType machinelearningv1.AlibiExplainerType, expected string) {
+
+				tag, err := getAlibiExplainExplainerTypeTag(explainerType)
+				if err == nil {
+					Expect(tag).To(Equal(expected))
+				} else {
+					// if there is an error, the tag should also be ""
+					Expect(tag).To(Equal(""))
+				}
+			},
+			Entry("anchor text", machinelearningv1.AlibiAnchorsTabularExplainer, "anchor_tabular"),
+			Entry("anchor image", machinelearningv1.AlibiAnchorsImageExplainer, "anchor_image"),
+			Entry("anchor image", machinelearningv1.AlibiAnchorsTextExplainer, "anchor_text"),
+			Entry("anchor image", machinelearningv1.AlibiCounterfactualsExplainer, "counterfactuals"),
+			Entry("anchor image", machinelearningv1.AlibiContrastiveExplainer, "contrastive"),
+			Entry("anchor image", machinelearningv1.AlibiKernelShapExplainer, "kernel_shap"),
+			Entry("anchor image", machinelearningv1.AlibiIntegratedGradientsExplainer, "integrated_gradients"),
+			Entry("anchor image", machinelearningv1.AlibiALEExplainer, "ALE"),
+			Entry("anchor image", machinelearningv1.AlibiTreeShap, "tree_shap"),
+			Entry("unknown", machinelearningv1.AlibiExplainerType("unknown"), ""),
 		)
 	})
 })

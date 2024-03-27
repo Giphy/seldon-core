@@ -1,0 +1,44 @@
+########################### Generic Configuration #############################
+
+seldon_system_namespace: seldon-system
+seldon_namespaces: [ seldon, dev, prod ]
+
+
+######################## Seldon Core Configuration ############################
+
+# Version of Seldon Core to be installed, default: master
+# This can be any value accepted by "git checkout": branch, tag, SHA, HEAD, etc...
+seldon_core_version: master
+
+# Local folder of already cloned Seldon Core git repository to be used.
+# If defined then `seldon_core_version` will be ignored.
+# seldon_core_source_dir: "~/work/seldon-core"
+
+# Helm Values used for Seldon Core installation
+seldon_core_values:
+  istio:
+    enabled: true
+    gateway: "istio-system/seldon-gateway"
+
+
+############################ Istio Configuration ##############################
+
+istio_version: 1.17.1
+istio_create_seldon_gateway: true
+
+
+########################### MinIO Configuration ###############################
+
+minio_service_type: LoadBalancer
+minio_rclone_secret_name: "minio-bucket"
+
+
+# List of namespaces to which MinIO secret should be written
+
+minio_secret_namespaces: "{{ seldon_namespaces }}"
+
+
+###################### Seldon Monitoring Configuration ########################
+
+seldon_monitoring_namespace: "seldon-monitoring"
+seldon_monitoring_prometheus_operator_chart_version: "8.3.6"
