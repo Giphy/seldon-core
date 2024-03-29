@@ -47,7 +47,7 @@ setup(
         "urllib3 >= 1.26.5, < 1.27",
         "importlib-metadata<5; python_version < '3.8'",
         "ddtrace == 0.48.2",
-        "markupsafe == 2.0.1",
+        "markupsafe >=2.0.1, <=2.1.3",
     ],
     extras_require=extras,
     entry_points={
