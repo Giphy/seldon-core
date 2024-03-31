@@ -102,12 +102,6 @@ def start_servers(
     else:
         logger.info("Using standard multiprocessing library")
 
-    # Adding a GPRC healthcheck
-    predict = generate_enhanced_predict_method(user_class.predict)
-    setattr(user_class, 'predict', predict)
-    setattr(user_class, 'health_status', grpc_health_check)
-
-
     p2 = None
     if target2:
         p2 = mp.Process(target=target2, daemon=False)
@@ -642,6 +636,11 @@ def main():
         logger.info("Importing submodule %s", parts)
         interface_file = importlib.import_module(parts[0])
         user_class = getattr(interface_file, parts[1])
+
+    # Adding a GPRC healthcheck
+    predict = generate_enhanced_predict_method(user_class.predict)
+    setattr(user_class, 'predict', predict)
+    setattr(user_class, 'health_status', grpc_health_check)
 
     if args.persistence:
         logger.error(f"Persistence: ignored, persistence is deprecated")
