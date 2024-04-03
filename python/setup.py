@@ -46,6 +46,8 @@ setup(
         # Addresses CVE CVE-2019-11236 and CVE-2020-26137 and SNYK-PYTHON-URLLIB3-1533435
         "urllib3 >= 1.26.5, < 1.27",
         "importlib-metadata<5; python_version < '3.8'",
+        "ddtrace == 0.48.2",
+        "markupsafe >=2.0.1, <=2.1.3",
     ],
     extras_require=extras,
     entry_points={
