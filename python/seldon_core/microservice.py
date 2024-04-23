@@ -65,6 +65,7 @@ GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
 
 
 def grpc_health_check(self):
+    logging.debug("debug: start:grpc_health_check")
     channel = grpc.insecure_channel(f"localhost:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}")
     stub = prediction_pb2_grpc.ModelStub(channel)
 
@@ -72,14 +73,19 @@ def grpc_health_check(self):
     data = prediction_pb2.DefaultData(ndarray=batch)
     seldon_request = prediction_pb2.SeldonMessage(data=data)
     stub.Predict(seldon_request, metadata=[('x-datadog-trace-id', '2')])
+    logging.debug("debug: end:grpc_health_check")
     return []
 
 
 def generate_enhanced_predict_method(base_predict):
     def predict(self, X, _features_names=None):
+        logging.debug("debug: start:generate_enhanced_predict_method")
         if len(X) == 0:
+            logging.debug("debug: end:generate_enhanced_predict_method:empty")
             return []
-        return base_predict(self, X, _features_names)
+        result = base_predict(self, X, _features_names)
+        logging.debug("debug: end:generate_enhanced_predict_method")
+        return result
     return predict
 
 
@@ -532,6 +538,7 @@ def _make_grpc_server(
             sys.stdout.flush()
             workers = []
             for _ in range(args.grpc_workers):
+                logging.debug(f"starting grpc worker {_}")
                 # NOTE: It is imperative that the worker subprocesses be forked before
                 # any gRPC servers start up. See
                 # https://github.com/grpc/grpc/issues/16001 for more details.
@@ -548,8 +555,8 @@ def _make_grpc_server(
                 worker.start()
                 workers.append(worker)
             for worker in workers:
+                logging.debug(f"joining grpc worker {_}")
                 worker.join()
-
     return server
 
 
@@ -560,6 +567,7 @@ def _make_rest_metrics_server(
     def server() -> None:
         app = seldon_microservice.get_metrics_microservice(seldon_metrics)
         if args.debug:
+            logging.debug(f"Launching the app in debug mode")
             app.run(host="0.0.0.0", port=args.metrics_port)
         else:
             options = {
@@ -572,6 +580,8 @@ def _make_rest_metrics_server(
                 "post_worker_init": post_worker_init,
                 "keepalive": args.keepalive,
             }
+            import json
+            logging.debug("Launching the app: %s" % json.dumps(options))
             if args.pidfile is not None:
                 options["pidfile"] = args.pidfile
             StandaloneApplication(app, options=options).run()
