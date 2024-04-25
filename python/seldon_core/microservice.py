@@ -66,7 +66,9 @@ GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
 
 def grpc_health_check(self):
     logging.debug("debug: start:grpc_health_check")
-    channel = grpc.insecure_channel(f"localhost:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}")
+    channel_url = f"127.0.0.1:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}"
+    logging.info(f"debug: {channel_url}")
+    channel = grpc.insecure_channel(channel_url)
     stub = prediction_pb2_grpc.ModelStub(channel)
 
     batch = struct_pb2.ListValue()
