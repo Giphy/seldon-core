@@ -581,7 +581,7 @@ def _make_rest_metrics_server(
                 "keepalive": args.keepalive,
             }
             import json
-            logging.debug("Launching the app: %s" % json.dumps(options))
+            logging.debug("Launching the app: %s" % str(options))
             if args.pidfile is not None:
                 options["pidfile"] = args.pidfile
             StandaloneApplication(app, options=options).run()
