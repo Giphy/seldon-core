@@ -151,7 +151,9 @@ def get_rest_microservice(user_model, seldon_metrics):
     @app.route("/api/v1.0/health/status", methods=["GET"])
     def HealthStatus():
         logger.debug("REST Health Status Request")
+        logger.error("REST Health Status Request")
         response = seldon_core.seldon_methods.health_status(user_model, seldon_metrics)
+        logger.error("REST Health Status Response: %s", response)
         logger.debug("REST Health Status Response: %s", response)
         return jsonify(response)
 
@@ -232,50 +234,66 @@ def _set_flask_app_configs(app):
 
 class SeldonModelGRPC:
     def __init__(self, user_model, seldon_metrics):
+        logger.error("SeldonModelGRPC::init::begin")
         self.user_model = user_model
         self.seldon_metrics = seldon_metrics
 
         self.metadata_data = seldon_core.seldon_methods.init_metadata(user_model)
+        logger.error("SeldonModelGRPC::init::end")
 
     def Predict(self, request_grpc, context):
+        try:
+            logger.error(f"grpc context: {context}")
+            logger.error(f"grpc context peer: {context.peer()}")
+        except Exception as e:
+            logger.error(f"grpc context error {e}")
+
         return seldon_core.seldon_methods.predict(
             self.user_model, request_grpc, self.seldon_metrics
         )
 
     def SendFeedback(self, feedback_grpc, context):
+        logger.error(f"::SendFeedback")
         return seldon_core.seldon_methods.send_feedback(
             self.user_model, feedback_grpc, PRED_UNIT_ID, self.seldon_metrics
         )
 
     def TransformInput(self, request_grpc, context):
+        logger.error(f"::TransformInput")
         return seldon_core.seldon_methods.transform_input(
             self.user_model, request_grpc, self.seldon_metrics
         )
 
     def TransformOutput(self, request_grpc, context):
+        logger.error(f"::TransformOutput")
         return seldon_core.seldon_methods.transform_output(
             self.user_model, request_grpc, self.seldon_metrics
         )
 
     def Route(self, request_grpc, context):
+        logger.error("::Route")
         return seldon_core.seldon_methods.route(
             self.user_model, request_grpc, self.seldon_metrics
         )
 
     def Aggregate(self, request_grpc, context):
+        logger.error("::Aggregate")
         return seldon_core.seldon_methods.aggregate(
             self.user_model, request_grpc, self.seldon_metrics
         )
 
     def Metadata(self, request_grpc, context):
+        logger.error("::Metadata")
         """Metadata method of rpc Model service"""
         return json_to_seldon_model_metadata(self.metadata_data)
 
     def ModelMetadata(self, request_grpc, context):
+        logger.error("::ModelMetadata")
         """ModelMetadata method of rpc Seldon service"""
         return json_to_seldon_model_metadata(self.metadata_data)
 
     def GraphMetadata(self, request_grpc, context):
+        logger.error("::GraphMetadata")
         """GraphMetadata method of rpc Seldon service"""
         raise NotImplementedError("GraphMetadata not available on the Model level.")
 

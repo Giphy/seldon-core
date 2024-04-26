@@ -525,8 +525,12 @@ def client_health_status(
     """
     if hasattr(user_model, "health_status"):
         try:
-            return user_model.health_status()
+            logger.error("user_model:client_health_status:start")
+            result = user_model.health_status()
+            logger.error("user_model:client_health_status:end")
+            return result
         except SeldonNotImplementedError:
+            logger.error("user_model:client_health_status:error")
             return "not implemented - assuming healthy"
     else:
         return "healthy"

@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import time
+import grpc
 from distutils.util import strtobool
 from functools import partial
 from typing import Any, Callable, Dict, List, Tuple
@@ -29,6 +30,9 @@ from seldon_core.gunicorn_utils import (
 )
 from seldon_core.metrics import SeldonMetrics
 from seldon_core.utils import getenv_as_bool, setup_tracing
+from seldon_core.proto import prediction_pb2, prediction_pb2_grpc
+from google.protobuf import struct_pb2
+
 
 # This is related to how multiprocessing is implemeneted on MacOS
 # See https://github.com/SeldonIO/seldon-core/issues/3410 for discussion.
@@ -58,6 +62,33 @@ DEFAULT_METRICS_PORT = 6000
 
 DEBUG_ENV = "SELDON_DEBUG"
 GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
+
+
+def grpc_health_check(self):
+    logger.error("debug: start:grpc_health_check")
+    channel_url = f"127.0.0.1:{os.environ.get(GRPC_SERVICE_PORT_ENV_NAME, DEFAULT_GRPC_PORT)}"
+    logger.error(f"debug: {channel_url}")
+    channel = grpc.insecure_channel(channel_url)
+    stub = prediction_pb2_grpc.ModelStub(channel)
+
+    batch = struct_pb2.ListValue()
+    data = prediction_pb2.DefaultData(ndarray=batch)
+    seldon_request = prediction_pb2.SeldonMessage(data=data)
+    stub.Predict(seldon_request, metadata=[('x-datadog-trace-id', '2')])
+    logger.error("debug: end:grpc_health_check")
+    return []
+
+
+def generate_enhanced_predict_method(base_predict):
+    def predict(self, X, _features_names=None):
+        logger.error("debug: start:generate_enhanced_predict_method")
+        if len(X) == 0:
+            logger.error("debug: end:generate_enhanced_predict_method:empty")
+            return []
+        result = base_predict(self, X, _features_names)
+        logger.error("debug: end:generate_enhanced_predict_method")
+        return result
+    return predict
 
 
 def start_servers(
@@ -468,7 +499,7 @@ def _run_grpc_server(
     if args.tracing:
         from grpc_opentracing import open_tracing_server_interceptor
 
-        logger.info("Adding tracer")
+        logger.info("Adding GRPC tracer")
         tracer = setup_tracing(args.interface_name)
         interceptor = open_tracing_server_interceptor(tracer)
     else:
@@ -509,6 +540,7 @@ def _make_grpc_server(
             sys.stdout.flush()
             workers = []
             for _ in range(args.grpc_workers):
+                logger.error(f"starting grpc worker {_}")
                 # NOTE: It is imperative that the worker subprocesses be forked before
                 # any gRPC servers start up. See
                 # https://github.com/grpc/grpc/issues/16001 for more details.
@@ -525,8 +557,8 @@ def _make_grpc_server(
                 worker.start()
                 workers.append(worker)
             for worker in workers:
+                logger.error(f"joining grpc worker {_}")
                 worker.join()
-
     return server
 
 
@@ -537,6 +569,7 @@ def _make_rest_metrics_server(
     def server() -> None:
         app = seldon_microservice.get_metrics_microservice(seldon_metrics)
         if args.debug:
+            logger.error(f"Launching the app in debug mode")
             app.run(host="0.0.0.0", port=args.metrics_port)
         else:
             options = {
@@ -549,6 +582,8 @@ def _make_rest_metrics_server(
                 "post_worker_init": post_worker_init,
                 "keepalive": args.keepalive,
             }
+            import json
+            logger.error("Launching the app: %s" % str(options))
             if args.pidfile is not None:
                 options["pidfile"] = args.pidfile
             StandaloneApplication(app, options=options).run()
@@ -613,6 +648,11 @@ def main():
         logger.info("Importing submodule %s", parts)
         interface_file = importlib.import_module(parts[0])
         user_class = getattr(interface_file, parts[1])
+
+    # Adding a GPRC healthcheck
+    predict = generate_enhanced_predict_method(user_class.predict)
+    setattr(user_class, 'predict', predict)
+    setattr(user_class, 'health_status', grpc_health_check)
 
     if args.persistence:
         logger.error(f"Persistence: ignored, persistence is deprecated")

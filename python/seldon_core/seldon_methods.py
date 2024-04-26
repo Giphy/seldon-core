@@ -658,21 +658,30 @@ def health_status(
     -------
       Health check output
     """
-
+    logger.error("seldon_methods:health_status:start")
     if hasattr(user_model, "health_status_raw"):
         try:
-            return user_model.health_status_raw()
+            logger.error("seldon_methods:health_status_raw:start")
+            result = user_model.health_status_raw()
+            logger.error("seldon_methods:health_status_raw:end")
+            return result
         except SeldonNotImplementedError:
+            logger.error("seldon_methods:health_status_raw:error")
             pass
 
+    logger.error("seldon_methods:health_status::client_health_status::begin")
     client_response = client_health_status(user_model)
+    logger.error("seldon_methods:health_status::client_health_status::end")
     metrics = client_custom_metrics(
         user_model, seldon_metrics, HEALTH_METRIC_METHOD_TAG
     )
+    logger.error("seldon_methods:health_status::client_custom_metrics::end")
 
-    return construct_response_json(
+    result = construct_response_json(
         user_model, False, {}, client_response, None, metrics
     )
+    logger.error("seldon_methods:health_status:end")
+    return result
 
 
 def init_metadata(user_model: Any) -> Dict:
