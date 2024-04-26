@@ -151,7 +151,9 @@ def get_rest_microservice(user_model, seldon_metrics):
     @app.route("/api/v1.0/health/status", methods=["GET"])
     def HealthStatus():
         logger.debug("REST Health Status Request")
+        logger.error("REST Health Status Request")
         response = seldon_core.seldon_methods.health_status(user_model, seldon_metrics)
+        logger.error("REST Health Status Response: %s", response)
         logger.debug("REST Health Status Response: %s", response)
         return jsonify(response)
 
