@@ -727,7 +727,11 @@ def setup_tracing(interface_name: str) -> object:
     logger.info("Initializing tracing")
     dd_enabled = os.environ.get("DD_ENABLED", "false")
     if dd_enabled.lower() in ("yes", "true", "t", "1"):
-        from ddtrace import sampler, opentracer
+        from ddtrace import opentracer
+        try:
+            from ddtrace import sampler
+        except ImportError:
+            from ddtrace._trace import sampler
 
         logger.info("Initializing Datadog tracer")
 
