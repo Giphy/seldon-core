@@ -183,7 +183,16 @@ def test_model_template_app_grpc_metrics(microservice):
                     RESOURCES_PATH, "tracing_config/tracing.yaml"
                 )
             },
-        }
+        },
+        {
+            "tracing": True,
+            "envs": {
+                "TRACING_PROVIDER": "datadog",
+                "SERVICE_NAME": "seldon-datadog-test",
+                "DD_APM_TRACING_ENABLED": "false",
+                "DD_INSTRUMENTATION_TELEMETRY_ENABLED": "false",
+            },
+        },
     ],
     indirect=True,
 )
@@ -206,6 +215,21 @@ def test_model_template_app_tracing_config(microservice):
     )
     response.raise_for_status()
     assert response.json() == {"data": {"ndarray": []}, "meta": {}}
+
+    grpc_data = np.array([[1, 2]])
+    grpc_request = prediction_pb2.SeldonMessage(
+        data=prediction_pb2.DefaultData(
+            tensor=prediction_pb2.Tensor(
+                shape=grpc_data.shape, values=grpc_data.flatten()
+            )
+        )
+    )
+    with grpc.insecure_channel("127.0.0.1:5000") as channel:
+        grpc_response = retry_method(
+            prediction_pb2_grpc.ModelStub(channel).Predict,
+            kwargs={"request": grpc_request},
+        )
+    assert grpc_response.data.tensor.values == [1, 2]
 
 
 def test_model_template_bad_params():

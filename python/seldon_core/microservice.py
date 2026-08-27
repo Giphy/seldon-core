@@ -7,7 +7,6 @@ import os
 import socket
 import sys
 import time
-from distutils.util import strtobool
 from functools import partial
 from typing import Any, Callable, Dict, List, Tuple
 
@@ -28,7 +27,15 @@ from seldon_core.gunicorn_utils import (
     worker_exit,
 )
 from seldon_core.metrics import SeldonMetrics
-from seldon_core.utils import getenv_as_bool, setup_tracing
+from seldon_core.utils import (
+    DATADOG_TRACING_PROVIDER,
+    OPENTELEMETRY_TRACING_PROVIDER,
+    TRACING_PROVIDERS,
+    getenv,
+    getenv_as_bool,
+    instrument_flask_app,
+    setup_tracing,
+)
 
 # This is related to how multiprocessing is implemeneted on MacOS
 # See https://github.com/SeldonIO/seldon-core/issues/3410 for discussion.
@@ -37,7 +44,14 @@ USE_MULTIPROCESS = getenv_as_bool(USE_MULTIPROCESS_ENV_NAME, default=False)
 if USE_MULTIPROCESS:
     import multiprocess as mp
 else:
-    import multiprocessing as mp
+    import multiprocessing
+
+    # Python 3.14 changed the POSIX default from fork to forkserver. The server
+    # targets are closures and intentionally rely on fork semantics.
+    if sys.platform.startswith("linux"):
+        mp = multiprocessing.get_context("fork")
+    else:
+        mp = multiprocessing
 
 
 logger = logging.getLogger(__name__)
@@ -58,6 +72,15 @@ DEFAULT_METRICS_PORT = 6000
 
 DEBUG_ENV = "SELDON_DEBUG"
 GUNICORN_ACCESS_LOG_ENV = "GUNICORN_ACCESS_LOG"
+
+
+def strtobool(value: str) -> int:
+    normalized_value = value.lower()
+    if normalized_value in ("y", "yes", "t", "true", "on", "1"):
+        return 1
+    if normalized_value in ("n", "no", "f", "false", "off", "0"):
+        return 0
+    raise ValueError(f"invalid truth value {value!r}")
 
 
 def start_servers(
@@ -259,6 +282,17 @@ def parse_args() -> Tuple[argparse.Namespace, List[str]]:
         const=1,
         type=int,
     )
+    parser.add_argument(
+        "--tracing-provider",
+        choices=TRACING_PROVIDERS,
+        default=os.environ.get(
+            "TRACING_PROVIDER", OPENTELEMETRY_TRACING_PROVIDER
+        ).lower(),
+        help=(
+            "Tracing backend to use when tracing is enabled. Configure Datadog "
+            "with SERVICE_NAME and DD_TRACE_AGENT_URL or DD_AGENT_HOST."
+        ),
+    )
 
     # gunicorn settings, defaults are from
     # http://docs.gunicorn.org/en/stable/settings.html
@@ -357,14 +391,14 @@ def _make_rest_server_debug(
     user_object: Any,
     seldon_metrics: SeldonMetrics,
     args: argparse.Namespace,
-    jaeger_extra_tags: List[str],
+    tracing_extra_tags: List[str],
 ) -> Callable[[], None]:
     """Makes a function that creates a REST debugging server.
     Args:
         user_object: an instance of user-defined class, inherited from user_model.SeldonComponent.
         seldon_metrics: a SeldonMetrics instance.
         args: parsed args from commandline.
-        jaeger_extra_tags:
+        tracing_extra_tags:
     """
 
     def server():
@@ -375,12 +409,17 @@ def _make_rest_server_debug(
             pass
         if args.tracing:
             logger.info("Tracing branch is active")
-            from flask_opentracing import FlaskTracing
+            tracer_provider = setup_tracing(
+                args.interface_name, provider=args.tracing_provider
+            )
 
-            tracer = setup_tracing(args.interface_name)
-
-            logger.info("Set JAEGER_EXTRA_TAGS %s", jaeger_extra_tags)
-            FlaskTracing(tracer, True, app, jaeger_extra_tags)
+            logger.info("Tracing request attributes: %s", tracing_extra_tags)
+            instrument_flask_app(
+                app,
+                tracer_provider,
+                tracing_extra_tags,
+                provider=args.tracing_provider,
+            )
 
         # Timeout not supported in flask development server
         app.run(
@@ -396,7 +435,7 @@ def _make_rest_server_prod(
     user_object: Any,
     seldon_metrics: SeldonMetrics,
     args: argparse.Namespace,
-    jaeger_extra_tags: List[str],
+    tracing_extra_tags: List[str],
     annotations: Dict[str, str],
 ) -> Callable[[], None]:
     """Makes a function that creates a REST production server.
@@ -404,7 +443,7 @@ def _make_rest_server_prod(
         user_object: an instance of user-defined class, inherited from user_model.SeldonComponent.
         seldon_metrics: a SeldonMetrics instance.
         args: parsed args from commandline.
-        jaeger_extra_tags:
+        tracing_extra_tags:
         annotations:
     """
 
@@ -439,7 +478,8 @@ def _make_rest_server_prod(
             app,
             user_object,
             args.tracing,
-            jaeger_extra_tags,
+            args.tracing_provider,
+            tracing_extra_tags,
             args.interface_name,
             options=options,
         ).run()
@@ -465,12 +505,18 @@ def _run_grpc_server(
     """Start a server in a subprocess."""
     logger.info(f"Starting new GRPC server with {args.grpc_threads} threads.")
 
-    if args.tracing:
-        from grpc_opentracing import open_tracing_server_interceptor
+    if args.tracing and args.tracing_provider == DATADOG_TRACING_PROVIDER:
+        logger.info("Adding Datadog gRPC tracing")
+        setup_tracing(args.interface_name, provider=args.tracing_provider)
+        interceptor = None
+    elif args.tracing:
+        from opentelemetry.instrumentation.grpc import server_interceptor
 
         logger.info("Adding tracer")
-        tracer = setup_tracing(args.interface_name)
-        interceptor = open_tracing_server_interceptor(tracer)
+        tracer_provider = setup_tracing(
+            args.interface_name, provider=args.tracing_provider
+        )
+        interceptor = server_interceptor(tracer_provider=tracer_provider)
     else:
         interceptor = None
 
@@ -592,14 +638,20 @@ def main():
 
     setup_logger(args.log_level, args.debug)
 
-    # set flask trace jaeger extra tags
-    jaeger_extra_tags = list(
+    # Request attributes to attach to Flask tracing spans. Keep the Jaeger
+    # variable as a backwards-compatible fallback.
+    tracing_extra_tags = list(
         filter(
             lambda x: (x != ""),
-            [tag.strip() for tag in os.environ.get("JAEGER_EXTRA_TAGS", "").split(",")],
+            [
+                tag.strip()
+                for tag in getenv(
+                    "TRACING_EXTRA_TAGS", "JAEGER_EXTRA_TAGS", default=""
+                ).split(",")
+            ],
         )
     )
-    logger.info("Parse JAEGER_EXTRA_TAGS %s", jaeger_extra_tags)
+    logger.info("Tracing request attributes: %s", tracing_extra_tags)
 
     annotations = load_annotations()
     logger.info("Annotations: %s", annotations)
@@ -633,7 +685,7 @@ def main():
             args.single_threaded,
         )
         server_rest_func = _make_rest_server_debug(
-            user_object, seldon_metrics, args, jaeger_extra_tags=jaeger_extra_tags
+            user_object, seldon_metrics, args, tracing_extra_tags=tracing_extra_tags
         )
     else:
         # Start production server
@@ -642,7 +694,7 @@ def main():
             user_object,
             seldon_metrics,
             args,
-            jaeger_extra_tags=jaeger_extra_tags,
+            tracing_extra_tags=tracing_extra_tags,
             annotations=annotations,
         )
 

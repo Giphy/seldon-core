@@ -7,7 +7,7 @@ from typing import Dict, Union
 from gunicorn.app.base import BaseApplication
 
 from seldon_core.metrics import SeldonMetrics
-from seldon_core.utils import setup_tracing
+from seldon_core.utils import instrument_flask_app, setup_tracing
 
 logger = logging.getLogger(__name__)
 
@@ -80,25 +80,32 @@ class UserModelApplication(StandaloneApplication):
         app,
         user_object,
         tracing,
-        jaeger_extra_tags,
+        tracing_provider,
+        tracing_extra_tags,
         interface_name,
         options: Dict = None,
     ):
         self.user_object = user_object
         self.tracing = tracing
-        self.jaeger_extra_tags = jaeger_extra_tags
+        self.tracing_provider = tracing_provider
+        self.tracing_extra_tags = tracing_extra_tags
         self.interface_name = interface_name
         super().__init__(app, options)
 
     def load(self):
-        if self.tracing and self.jaeger_extra_tags is not None:
+        if self.tracing and self.tracing_extra_tags is not None:
             logger.info("Tracing branch is active")
-            from flask_opentracing import FlaskTracing
+            tracer_provider = setup_tracing(
+                self.interface_name, provider=self.tracing_provider
+            )
 
-            tracer = setup_tracing(self.interface_name)
-
-            logger.info("Set JAEGER_EXTRA_TAGS %s", self.jaeger_extra_tags)
-            FlaskTracing(tracer, True, self.application, self.jaeger_extra_tags)
+            logger.info("Tracing request attributes: %s", self.tracing_extra_tags)
+            instrument_flask_app(
+                self.application,
+                tracer_provider,
+                self.tracing_extra_tags,
+                provider=self.tracing_provider,
+            )
         else:
             logger.info("Tracing not active")
         logger.debug("LOADING APP %d", os.getpid())

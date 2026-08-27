@@ -110,7 +110,7 @@ def predict(
                 pass
 
         if is_proto:
-            (features, meta, datadef, data_type) = extract_request_parts(request)
+            features, meta, datadef, data_type = extract_request_parts(request)
 
             client_response = client_predict(
                 user_model, features, datadef.names, meta=meta
@@ -133,7 +133,7 @@ def predict(
                 client_response.tags,
             )
         else:
-            (features, meta, datadef, data_type) = extract_request_parts_json(request)
+            features, meta, datadef, data_type = extract_request_parts_json(request)
             class_names = datadef["names"] if datadef and "names" in datadef else []
 
             client_response = client_predict(
@@ -201,7 +201,7 @@ def send_feedback(
             except SeldonNotImplementedError:
                 pass
 
-        (datadef_request, features, truth, reward) = extract_feedback_request_parts(
+        datadef_request, features, truth, reward = extract_feedback_request_parts(
             request
         )
         routing = request.response.meta.routing.get(predictive_unit_id)
@@ -277,7 +277,7 @@ def transform_input(
                 pass
 
         if is_proto:
-            (features, meta, datadef, data_type) = extract_request_parts(request)
+            features, meta, datadef, data_type = extract_request_parts(request)
 
             client_response = client_transform_input(
                 user_model, features, datadef.names, meta=meta
@@ -300,7 +300,7 @@ def transform_input(
                 client_response.tags,
             )
         else:
-            (features, meta, datadef, data_type) = extract_request_parts_json(request)
+            features, meta, datadef, data_type = extract_request_parts_json(request)
             class_names = datadef["names"] if datadef and "names" in datadef else []
 
             client_response = client_transform_input(
@@ -371,7 +371,7 @@ def transform_output(
                 pass
 
         if is_proto:
-            (features, meta, datadef, data_type) = extract_request_parts(request)
+            features, meta, datadef, data_type = extract_request_parts(request)
 
             client_response = client_transform_output(
                 user_model, features, datadef.names, meta=meta
@@ -394,7 +394,7 @@ def transform_output(
                 client_response.tags,
             )
         else:
-            (features, meta, datadef, data_type) = extract_request_parts_json(request)
+            features, meta, datadef, data_type = extract_request_parts_json(request)
             class_names = datadef["names"] if datadef and "names" in datadef else []
 
             client_response = client_transform_output(
@@ -456,7 +456,7 @@ def route(
                 pass
 
         if is_proto:
-            (features, meta, datadef, data_type) = extract_request_parts(request)
+            features, meta, datadef, data_type = extract_request_parts(request)
             client_response = client_route(
                 user_model, features, datadef.names, meta=meta
             )
@@ -483,7 +483,7 @@ def route(
                 client_response.tags,
             )
         else:
-            (features, meta, datadef, data_type) = extract_request_parts_json(request)
+            features, meta, datadef, data_type = extract_request_parts_json(request)
             class_names = datadef["names"] if datadef and "names" in datadef else []
             client_response = client_route(user_model, features, class_names, meta=meta)
             if not isinstance(client_response.data, int):
@@ -575,7 +575,7 @@ def aggregate(
             meta_list = []
 
             for msg in request.seldonMessages:
-                (features, meta, datadef, data_type) = extract_request_parts(msg)
+                features, meta, datadef, data_type = extract_request_parts(msg)
                 features_list.append(features)
                 names_list.append(datadef.names)
                 meta_list.append(meta)
@@ -615,7 +615,7 @@ def aggregate(
 
             meta_list = []
             for msg in msgs:
-                (features, meta, datadef, data_type) = extract_request_parts_json(msg)
+                features, meta, datadef, data_type = extract_request_parts_json(msg)
                 class_names = datadef["names"] if datadef and "names" in datadef else []
                 features_list.append(features)
                 names_list.append(class_names)

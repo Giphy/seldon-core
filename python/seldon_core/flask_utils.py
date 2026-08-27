@@ -78,10 +78,7 @@ def get_request(skip_decoding=False) -> Union[Dict, bytes]:
 
         return data
 
-    try:
-        message = request.get_json()
-    except BadRequest:
-        raise SeldonMicroserviceException("Can't find JSON in data")
+    message = request.get_json(silent=True)
     if message is None:
         raise SeldonMicroserviceException("Can't find JSON in data")
 

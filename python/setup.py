@@ -4,7 +4,7 @@ from itertools import chain
 from setuptools import find_packages, setup
 
 # Extra dependencies, with special 'all' key
-extras = {"tensorflow": ["tensorflow"]}
+extras = {"tensorflow": ["tensorflow>=2.21.0,<3.0.0"]}
 all_extra_deps = chain.from_iterable(extras.values())
 extras["all"] = list(set(all_extra_deps))
 
@@ -19,33 +19,29 @@ setup(
     license_files=["LICENSE"],
     packages=find_packages(),
     include_package_data=True,
-    python_requires=">=3.6",
+    python_requires=">=3.12",
     install_requires=[
-        "Flask >= 2.0.0, <3.0.0",
-        "jsonschema<4.0.0",
-        "Flask-cors<4.0.0",
-        "requests<3.0.0",
-        "numpy<2.0.0",
-        "protobuf>=3.20.2,<4.0.0",
-        "grpcio<2.0.0",
-        "Flask-OpenTracing >= 1.1.0, < 1.2.0",
-        "opentracing >= 2.2.0, < 2.5.0",
-        "jaeger-client >= 4.1.0, < 4.5.0",
-        "grpcio-opentracing >= 1.1.4, < 1.2.0",
-        "grpcio-reflection < 2.0.0",
-        "gunicorn >= 19.9.0, < 20.2.0",
-        "setuptools >= 65.5.1",
-        "prometheus_client >= 0.7.1, < 0.9.0",
-        "werkzeug >= 2.1.1, < 2.3",
-        # Addresses CVE SNYK-PYTHON-CRYPTOGRAPHY-3315328
-        "cryptography >= 39.0.1, < 41.1",
-        # Addresses CVE SNYK-PYTHON-PYYAML-590151
-        "PyYAML >= 5.4, <= 6.0.1",
-        # Addresses CVE PRISMA-2021-0020
-        "click >= 8.0.0a1, < 8.1",
-        # Addresses CVE CVE-2019-11236 and CVE-2020-26137 and SNYK-PYTHON-URLLIB3-1533435
-        "urllib3 >= 1.26.5, < 1.27",
-        "importlib-metadata<5; python_version < '3.8'",
+        "Flask>=3.1.3,<4.0.0",
+        "jsonschema>=4.26.0,<5.0.0",
+        "Flask-Cors>=6.0.5,<7.0.0",
+        "requests>=2.34.2,<3.0.0",
+        "numpy>=2.5.2,<3.0.0",
+        "protobuf>=7.36.0,<8.0.0",
+        "grpcio>=1.83.0,<2.0.0",
+        "grpcio-reflection>=1.83.0,<2.0.0",
+        "gunicorn>=26.2.0,<27.0.0",
+        "prometheus-client>=0.26.0,<1.0.0",
+        "werkzeug>=3.1.8,<4.0.0",
+        "cryptography>=50.0.1,<51.0.0",
+        "PyYAML>=6.0.3,<7.0.0",
+        "click>=8.5.0,<9.0.0",
+        "urllib3>=2.7.0,<3.0.0",
+        "opentelemetry-api>=1.44.0,<2.0.0",
+        "opentelemetry-sdk>=1.44.0,<2.0.0",
+        "opentelemetry-exporter-otlp-proto-grpc>=1.44.0,<2.0.0",
+        "opentelemetry-instrumentation-flask>=0.65b0,<1.0.0",
+        "opentelemetry-instrumentation-grpc>=0.65b0,<1.0.0",
+        "ddtrace>=4.14.0,<5.0.0",
     ],
     extras_require=extras,
     entry_points={

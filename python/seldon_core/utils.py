@@ -3,7 +3,7 @@ import json
 import logging
 import os
 import sys
-from typing import Dict, Iterable, List, Optional, Tuple, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 import numpy as np
 from google.protobuf import any_pb2, json_format
@@ -33,6 +33,20 @@ if _TF_PRESENT:
     from tensorflow.core.framework.tensor_pb2 import TensorProto
 
 logger = logging.getLogger(__name__)
+_TRACING_BACKENDS: Dict[str, object] = {}
+
+OPENTELEMETRY_TRACING_PROVIDER = "opentelemetry"
+DATADOG_TRACING_PROVIDER = "datadog"
+TRACING_PROVIDERS = (OPENTELEMETRY_TRACING_PROVIDER, DATADOG_TRACING_PROVIDER)
+SERVICE_NAME_ENV = "SERVICE_NAME"
+
+
+def _as_numpy_array(values) -> np.ndarray:
+    try:
+        return np.array(values)
+    except ValueError:
+        # NumPy 2 rejects ragged sequences unless object dtype is explicit.
+        return np.array(values, dtype=object)
 
 
 def get_request_path():
@@ -44,7 +58,7 @@ def get_request_path():
 
 
 def json_to_seldon_message(
-    message_json: Union[List, Dict]
+    message_json: Union[List, Dict],
 ) -> prediction_pb2.SeldonMessage:
     """
     Parses JSON input to a SeldonMessage proto
@@ -235,7 +249,7 @@ def grpc_datadef_to_array(datadef: prediction_pb2.DefaultData) -> np.ndarray:
             features = np.array(datadef.tensor.values).reshape(datadef.tensor.shape)
     elif data_type == "ndarray":
         py_arr = json_format.MessageToDict(datadef.ndarray)
-        features = np.array(py_arr)
+        features = _as_numpy_array(py_arr)
     elif data_type == "tftensor":
         features = tf.make_ndarray(datadef.tftensor)
     else:
@@ -414,7 +428,7 @@ def construct_response_json(
             np_client_raw_response = client_raw_response
             list_client_raw_response = client_raw_response.tolist()
         else:
-            np_client_raw_response = np.array(client_raw_response)
+            np_client_raw_response = _as_numpy_array(client_raw_response)
             list_client_raw_response = client_raw_response
 
         response["data"] = {}
@@ -550,7 +564,7 @@ def construct_response(
     if isinstance(client_raw_response, np.ndarray) or isinstance(
         client_raw_response, list
     ):
-        client_raw_response = np.array(client_raw_response)
+        client_raw_response = _as_numpy_array(client_raw_response)
         if is_request:
             names = client_feature_names(user_model, client_request.data.names)
         else:
@@ -588,9 +602,7 @@ def construct_response(
         )
 
 
-def extract_request_parts_json(
-    request: Union[Dict, List]
-) -> Tuple[
+def extract_request_parts_json(request: Union[Dict, List]) -> Tuple[
     Union[np.ndarray, str, bytes, Dict, List],
     Union[Dict, None],
     Union[np.ndarray, str, bytes, Dict, List, None],
@@ -620,7 +632,7 @@ def extract_request_parts_json(
             tensor = datadef["tensor"]
             features = np.array(tensor["values"]).reshape(tensor["shape"])
         elif "ndarray" in datadef:
-            features = np.array(datadef["ndarray"])
+            features = _as_numpy_array(datadef["ndarray"])
         elif "tftensor" in datadef:
             tf_proto = TensorProto()
             json_format.ParseDict(datadef["tftensor"], tf_proto)
@@ -723,35 +735,99 @@ def getenv_as_bool(*env_vars, default=False):
     return val.lower() in ["1", "true", "t"]
 
 
-def setup_tracing(interface_name: str) -> object:
-    logger.info("Initializing tracing")
-    from jaeger_client import Config
+def setup_tracing(
+    interface_name: str, provider: str = OPENTELEMETRY_TRACING_PROVIDER
+) -> object:
+    logger.info("Initializing %s tracing", provider)
 
-    jaeger_serv = os.environ.get("JAEGER_AGENT_HOST", "0.0.0.0")
-    jaeger_port = os.environ.get("JAEGER_AGENT_PORT", 5775)
-    jaeger_config = os.environ.get("JAEGER_CONFIG_PATH", None)
-    if jaeger_config is None:
-        logger.info("Using default tracing config")
-        config = Config(
-            config={  # usually read from some yaml config
-                "sampler": {"type": "const", "param": 1},
-                "local_agent": {
-                    "reporting_host": jaeger_serv,
-                    "reporting_port": jaeger_port,
-                },
-                "logging": True,
-            },
-            service_name=interface_name,
-            validate=True,
+    if provider not in TRACING_PROVIDERS:
+        raise ValueError(
+            f"Unsupported tracing provider {provider!r}; "
+            f"expected one of {', '.join(TRACING_PROVIDERS)}"
         )
-    else:
-        logger.info("Loading tracing config from %s", jaeger_config)
-        import yaml
 
-        with open(jaeger_config, "r") as stream:
-            config_dict = yaml.safe_load(stream)
-            config = Config(
-                config=config_dict, service_name=interface_name, validate=True
-            )
-    # this call also sets opentracing.tracer
-    return config.initialize_tracer()
+    if provider in _TRACING_BACKENDS:
+        return _TRACING_BACKENDS[provider]
+
+    if provider == DATADOG_TRACING_PROVIDER:
+        from ddtrace import config, patch, tracer
+
+        service_name = getenv(SERVICE_NAME_ENV, "DD_SERVICE", default=interface_name)
+        config.service = service_name
+        config.flask["service_name"] = service_name
+        config.grpc_server["service_name"] = service_name
+        patch(flask=True, grpc=True)
+        _TRACING_BACKENDS[provider] = tracer
+        return tracer
+
+    from opentelemetry import trace
+    from opentelemetry.exporter.otlp.proto.grpc.trace_exporter import (
+        OTLPSpanExporter,
+    )
+    from opentelemetry.sdk.resources import SERVICE_NAME, Resource
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import BatchSpanProcessor
+
+    legacy_variables = (
+        "JAEGER_AGENT_HOST",
+        "JAEGER_AGENT_PORT",
+        "JAEGER_CONFIG_PATH",
+    )
+    if any(variable in os.environ for variable in legacy_variables):
+        logger.warning(
+            "Jaeger client configuration is no longer supported; configure the "
+            "OTLP exporter with OTEL_EXPORTER_OTLP_* environment variables"
+        )
+
+    service_name = getenv(SERVICE_NAME_ENV, "OTEL_SERVICE_NAME", default=interface_name)
+    tracer_provider = TracerProvider(
+        resource=Resource.create({SERVICE_NAME: service_name}),
+    )
+    tracer_provider.add_span_processor(BatchSpanProcessor(OTLPSpanExporter()))
+    trace.set_tracer_provider(tracer_provider)
+    _TRACING_BACKENDS[OPENTELEMETRY_TRACING_PROVIDER] = tracer_provider
+    return tracer_provider
+
+
+def instrument_flask_app(
+    app: Any,
+    tracer_provider: Any,
+    traced_attributes: Iterable[str],
+    provider: str = OPENTELEMETRY_TRACING_PROVIDER,
+) -> None:
+    from flask import request
+
+    if provider == DATADOG_TRACING_PROVIDER:
+
+        @app.before_request
+        def add_datadog_request_tags():
+            span = tracer_provider.current_span()
+            if span is None:
+                return
+
+            for attribute in traced_attributes:
+                value = getattr(request, attribute, None)
+                if value is not None and not callable(value):
+                    span.set_tag(attribute, value)
+
+        return
+
+    from opentelemetry.instrumentation.flask import FlaskInstrumentor
+
+    def request_hook(span, environ):
+        if not span or not span.is_recording():
+            return
+
+        for attribute in traced_attributes:
+            value = getattr(request, attribute, environ.get(attribute, None))
+            if value is None or callable(value):
+                continue
+            if not isinstance(value, (bool, str, bytes, int, float)):
+                value = str(value)
+            span.set_attribute(attribute, value)
+
+    FlaskInstrumentor.instrument_app(
+        app,
+        request_hook=request_hook,
+        tracer_provider=tracer_provider,
+    )

@@ -294,14 +294,12 @@ def get_grpc_server(
         options.append(("grpc.max_send_message_length", max_msg))
         options.append(("grpc.max_receive_message_length", max_msg))
 
+    interceptors = (trace_interceptor,) if trace_interceptor else ()
     server = grpc.server(
-        futures.ThreadPoolExecutor(max_workers=num_threads), options=options
+        futures.ThreadPoolExecutor(max_workers=num_threads),
+        options=options,
+        interceptors=interceptors,
     )
-
-    if trace_interceptor:
-        from grpc_opentracing.grpcext import intercept_server
-
-        server = intercept_server(server, trace_interceptor)
 
     prediction_pb2_grpc.add_GenericServicer_to_server(seldon_model, server)
     prediction_pb2_grpc.add_ModelServicer_to_server(seldon_model, server)

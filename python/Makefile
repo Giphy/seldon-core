@@ -73,7 +73,7 @@ type_check:
 
 .PHONY: build_pypi
 build_pypi:
-	python setup.py sdist bdist_wheel
+	python -m build
 
 .PHONY: build_conda
 build_conda:
@@ -95,7 +95,7 @@ push_conda:
 	@echo "Alternatively use anaconda upload to publish on own channel"
 
 setup_linter:
-	pip install black==20.8b1 isort==5.7.0 nbqa==0.10.0
+	pip install black==26.5.1 isort==9.0.0 nbqa==1.9.1
 
 fmt:
 	black \

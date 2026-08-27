@@ -2,9 +2,11 @@ import base64
 import json
 import logging
 import pickle
+from unittest import mock
 
 import numpy as np
 import pytest
+from flask import Flask
 from google.protobuf import any_pb2
 from google.protobuf.struct_pb2 import Value
 
@@ -79,6 +81,58 @@ class UserObject:
             return [{"type": "BAD", "key": "mycounter", "value": 1}]
 
 
+def test_setup_datadog_tracing(monkeypatch):
+    from ddtrace import config, tracer
+
+    scu._TRACING_BACKENDS.pop(scu.DATADOG_TRACING_PROVIDER, None)
+    monkeypatch.setenv("SERVICE_NAME", "seldon-datadog-test")
+    monkeypatch.setenv("DD_SERVICE", "ignored-datadog-service")
+
+    with mock.patch("ddtrace.patch") as patch:
+        result = scu.setup_tracing("model", provider=scu.DATADOG_TRACING_PROVIDER)
+        cached_result = scu.setup_tracing(
+            "model", provider=scu.DATADOG_TRACING_PROVIDER
+        )
+
+    assert result is tracer
+    assert cached_result is tracer
+    assert config.service == "seldon-datadog-test"
+    assert config.flask["service_name"] == "seldon-datadog-test"
+    assert config.grpc_server["service_name"] == "seldon-datadog-test"
+    patch.assert_called_once_with(flask=True, grpc=True)
+    scu._TRACING_BACKENDS.pop(scu.DATADOG_TRACING_PROVIDER, None)
+    tracer.shutdown()
+
+
+def test_instrument_datadog_flask_request_attributes():
+    app = Flask(__name__)
+    tracer = mock.Mock()
+    span = tracer.current_span.return_value
+
+    scu.instrument_flask_app(
+        app,
+        tracer,
+        ["method", "path"],
+        provider=scu.DATADOG_TRACING_PROVIDER,
+    )
+
+    @app.route("/predict")
+    def predict():
+        return "ok"
+
+    response = app.test_client().get("/predict")
+
+    assert response.status_code == 200
+    span.set_tag.assert_has_calls(
+        [mock.call("method", "GET"), mock.call("path", "/predict")]
+    )
+
+
+def test_setup_tracing_rejects_unknown_provider():
+    with pytest.raises(ValueError, match="Unsupported tracing provider"):
+        scu.setup_tracing("model", provider="unknown")
+
+
 def test_create_rest_response_nparray():
     user_model = UserObject()
     request = {}
@@ -99,9 +153,11 @@ def test_create_grpc_response_nparray():
 
 def test_create_rest_response_text_ndarray():
     user_model = UserObject()
-    request_data = np.array([["hello", "world"], ["hello", "another", "world"]])
+    request_data = np.array(
+        [["hello", "world"], ["hello", "another", "world"]], dtype=object
+    )
     request = {"data": {"ndarray": request_data, "names": []}}
-    (features, meta, datadef, data_type) = scu.extract_request_parts_json(request)
+    features, meta, datadef, data_type = scu.extract_request_parts_json(request)
     raw_response = np.array([["hello", "world"], ["here", "another"]])
     result = scu.construct_response_json(user_model, True, request, raw_response)
     assert "ndarray" in result.get("data", {})
@@ -113,10 +169,12 @@ def test_create_rest_response_text_ndarray():
 
 def test_create_grpc_response_text_ndarray():
     user_model = UserObject()
-    request_data = np.array([["hello", "world"], ["hello", "another", "world"]])
+    request_data = np.array(
+        [["hello", "world"], ["hello", "another", "world"]], dtype=object
+    )
     datadef = scu.array_to_grpc_datadef("ndarray", request_data)
     request = prediction_pb2.SeldonMessage(data=datadef)
-    (features, meta, datadef, data_type) = scu.extract_request_parts(request)
+    features, meta, datadef, data_type = scu.extract_request_parts(request)
     raw_response = np.array([["hello", "world"], ["here", "another"]])
     sm = scu.construct_response(user_model, True, request, raw_response)
     assert sm.data.WhichOneof("data_oneof") == "ndarray"
@@ -289,7 +347,7 @@ def test_json_to_seldon_message_normal_data():
     assert requestProto.data.tensor.shape[0] == 1
     assert requestProto.data.tensor.shape[1] == 1
     assert len(requestProto.data.tensor.shape) == 2
-    (arr, meta, datadef, _) = scu.extract_request_parts(requestProto)
+    arr, meta, datadef, _ = scu.extract_request_parts(requestProto)
     assert isinstance(arr, np.ndarray)
     assert arr.shape[0] == 1
     assert arr.shape[1] == 1
@@ -300,7 +358,7 @@ def test_json_to_seldon_message_ndarray():
     data = {"data": {"ndarray": [[1]]}}
     requestProto = scu.json_to_seldon_message(data)
     assert requestProto.data.ndarray[0][0] == 1
-    (arr, meta, datadef, _) = scu.extract_request_parts(requestProto)
+    arr, meta, datadef, _ = scu.extract_request_parts(requestProto)
     assert isinstance(arr, np.ndarray)
     assert arr.shape[0] == 1
     assert arr.shape[1] == 1
@@ -316,7 +374,7 @@ def test_json_to_seldon_message_bin_data():
     assert len(requestProto.data.tensor.values) == 0
     assert requestProto.WhichOneof("data_oneof") == "binData"
     assert len(requestProto.binData) > 0
-    (arr, meta, datadef, _) = scu.extract_request_parts(requestProto)
+    arr, meta, datadef, _ = scu.extract_request_parts(requestProto)
     assert not isinstance(arr, np.ndarray)
     assert arr == serialized
 
@@ -326,14 +384,14 @@ def test_json_to_seldon_message_str_data():
     requestProto = scu.json_to_seldon_message(data)
     assert len(requestProto.data.tensor.values) == 0
     assert requestProto.WhichOneof("data_oneof") == "strData"
-    (arr, meta, datadef, _) = scu.extract_request_parts(requestProto)
+    arr, meta, datadef, _ = scu.extract_request_parts(requestProto)
     assert not isinstance(arr, np.ndarray)
     assert arr == "my string data"
 
 
 def test_json_to_seldon_message_json_data():
     json_data = {"jsonData": {"some": "value"}}
-    (json_data, meta, datadef, _) = scu.extract_request_parts_json(json_data)
+    json_data, meta, datadef, _ = scu.extract_request_parts_json(json_data)
     assert not isinstance(json_data, np.ndarray)
     assert json_data == {"some": "value"}
 

@@ -23,8 +23,7 @@ try:
     _TF_PRESENT = True
 except ImportError:
     _TF_PRESENT = False
-    notice = textwrap.dedent(
-        """
+    notice = textwrap.dedent("""
         Tensorflow is not installed.
         If you want to use `tftensor` and Tensorflow's data types
         install `tensorflow` or install `seldon_core` as
@@ -34,6 +33,5 @@ except ImportError:
         or
 
             $ pip install seldon_core[all]
-        """
-    )
+        """)
     logger.info(notice)
