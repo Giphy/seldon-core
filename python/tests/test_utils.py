@@ -81,6 +81,28 @@ class UserObject:
             return [{"type": "BAD", "key": "mycounter", "value": 1}]
 
 
+def test_as_numpy_array_falls_back_to_object_dtype_for_ragged_sequence():
+    values = [["hello", "world"], ["hello", "another", "world"]]
+
+    result = scu._as_numpy_array(values)
+
+    assert result.dtype == object
+    assert result.tolist() == values
+
+
+def test_extract_request_parts_json_preserves_float_strings():
+    values = [["1.25", "-2.5"], ["3.0", "4.75"]]
+    request = {"data": {"names": ["first", "second"], "ndarray": values}}
+
+    features, meta, datadef, data_type = scu.extract_request_parts_json(request)
+
+    assert np.issubdtype(features.dtype, np.str_)
+    assert features.tolist() == values
+    assert meta is None
+    assert datadef == request["data"]
+    assert data_type == "data"
+
+
 def test_setup_datadog_tracing(monkeypatch):
     from ddtrace import config, tracer
 

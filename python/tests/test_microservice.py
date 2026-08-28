@@ -55,6 +55,46 @@ def test_model_template_app_rest(microservice):
     assert response.json() == {"data": {"ndarray": []}, "meta": {}}
 
 
+def test_model_template_app_rest_ragged_ndarray(microservice):
+    data = {
+        "data": {
+            "names": ["sentences"],
+            "ndarray": [["hello", "world"], ["hello", "another", "world"]],
+        }
+    }
+
+    response = requests.post("http://127.0.0.1:9000/api/v1.0/predictions", json=data)
+
+    response.raise_for_status()
+    assert response.json() == {
+        "data": {
+            "names": [],
+            "ndarray": data["data"]["ndarray"],
+        },
+        "meta": {},
+    }
+
+
+def test_model_template_app_rest_float_strings_ndarray(microservice):
+    data = {
+        "data": {
+            "names": ["first", "second"],
+            "ndarray": [["1.25", "-2.5"], ["3.0", "4.75"]],
+        }
+    }
+
+    response = requests.post("http://127.0.0.1:9000/api/v1.0/predictions", json=data)
+
+    response.raise_for_status()
+    assert response.json() == {
+        "data": {
+            "names": ["t:0", "t:1"],
+            "ndarray": data["data"]["ndarray"],
+        },
+        "meta": {},
+    }
+
+
 def test_model_template_app_rest_tags(microservice):
     data = '{"meta":{"tags":{"foo":"bar"}},"data":{"names":["a","b"],"ndarray":[[1.0,2.0]]}}'
     response = requests.get("http://127.0.0.1:9000/predict", params="json=%s" % data)
